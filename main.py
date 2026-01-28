@@ -1,6 +1,8 @@
 import streamlit as st
 import os
-import tempfile
+import json
+import glob
+import re
 
 # --- IMPORTATIONS LANGCHAIN ---
 from langchain_community.document_loaders import PyPDFLoader
@@ -16,101 +18,167 @@ from langchain_core.prompts import ChatPromptTemplate
 st.set_page_config(page_title="Mon Assistant de Cours", page_icon="🤖")
 st.title("🤖 Spaceflight I(A)nstitute")
 
-# Configuration Proxy (si nécessaire)
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
-# --- FONCTION DE CHARGEMENT (MISE EN CACHE) ---
-# @st.cache_resource est CRUCIAL : il empêche de tout recharger à chaque question
-@st.cache_resource
-def initialize_rag_chain(pdf_file_path):
-    # 1. Chargement
-    loader = PyPDFLoader(pdf_file_path)
-    pages = loader.load()
+# --- GESTION DES DOSSIERS (NOUVELLE STRUCTURE) ---
+base_folder = "./data"
+cours_folder = os.path.join(base_folder, "cours")
+users_folder = os.path.join(base_folder, "users")
+
+# Création des dossiers s'ils n'existent pas
+for folder in [base_folder, cours_folder, users_folder]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+# --- 1. SÉLECTION INTELLIGENTE DES FICHIERS (DANS ./DATA/COURS) ---
+def get_relevant_files(prompt, pdf_folder_path):
+    """
+    Sélectionne les fichiers PDF dans le dossier 'cours' dont le nom correspond à la question.
+    """
+    # On cherche uniquement dans le dossier des cours
+    all_pdfs = glob.glob(os.path.join(pdf_folder_path, "*.pdf"))
     
-    # 2. Découpage
+    if not prompt:
+        return all_pdfs 
+
+    # Nettoyage du prompt
+    mots_vides = ["le", "la", "les", "de", "du", "des", "un", "une", "est", "sont", "pour", "comment", "quoi", "quel", "quelle"]
+    cleaned_prompt = re.sub(r'[^\w\s]', '', prompt.lower())
+    keywords = [word for word in cleaned_prompt.split() if word not in mots_vides and len(word) > 2]
+    
+    selected_files = []
+    
+    for pdf_path in all_pdfs:
+        filename = os.path.basename(pdf_path).lower()
+        if any(kw in filename for kw in keywords):
+            selected_files.append(pdf_path)
+            
+    if not selected_files:
+        return all_pdfs
+    
+    return list(set(selected_files))
+
+# --- 2. FONCTION RAG MODIFIÉE (Lit JSON dans ./DATA/USERS) ---
+def initialize_rag_chain_with_files(selected_files, json_folder_path):
+    
+    # --- CHARGEMENT JSON (Depuis le dossier users) ---
+    json_files = glob.glob(os.path.join(json_folder_path, "*.json"))
+    
+    user_name = "Étudiant"
+    ai_tone = "pédagogique"
+    preferred_content = "texte"
+
+    # On prend le premier fichier user trouvé (ou on pourrait filtrer par ID plus tard)
+    if json_files:
+        try:
+            with open(json_files[0], 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                user_info = data.get("utilisateur", {})
+                user_name = user_info.get("prenom", user_name)
+                learning_prefs = user_info.get("preferences_apprentissage", {})
+                ai_tone = learning_prefs.get("ton", ai_tone)
+                preferred_content = learning_prefs.get("contenu préféré", preferred_content)
+        except Exception as e:
+            print(f"Erreur lecture JSON: {e}")
+
+    # --- CHARGEMENT DES PDF SÉLECTIONNÉS ---
+    if not selected_files:
+        return None
+
+    all_pages = []
+    for pdf_path in selected_files:
+        try:
+            loader = PyPDFLoader(pdf_path)
+            all_pages.extend(loader.load())
+        except Exception as e:
+            st.error(f"Erreur lecture {os.path.basename(pdf_path)}: {e}")
+
+    if not all_pages:
+        return None
+
+    # --- DÉCOUPAGE & VECTORISATION ---
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = text_splitter.split_documents(pages)
+    chunks = text_splitter.split_documents(all_pages)
     
-    # 3. Vectorisation
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
-    retriever = vectorstore.as_retriever()
     
-    # 4. Modèle et Chaîne
+    vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    
+    # --- MODÈLE ---
     llm = Ollama(model="mistral")
     
     system_prompt = (
-        "Tu es un professeur assistant pédagogique. "
-        "Utilise le contexte suivant pour répondre à la question de l'étudiant."
-        "Si tu ne trouves pas la réponse dans le contexte, dis-le sèchement."
+        f"Tu es un assistant pour {user_name}. Ton ton : {ai_tone}. "
+        f"Format préféré : {preferred_content}. "
+        "Réponds en utilisant le contexte suivant :"
         "\n\n"
         "{context}"
     )
     
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("human", "{input}"),
-        ]
+    prompt_template = ChatPromptTemplate.from_messages(
+        [("system", system_prompt), ("human", "{input}")]
     )
     
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
+    question_answer_chain = create_stuff_documents_chain(llm, prompt_template)
     rag_chain = create_retrieval_chain(retriever, question_answer_chain)
     
     return rag_chain
 
-# --- INTERFACE UTILISATEUR (SIDEBAR) ---
+# --- INTERFACE (SIDEBAR) ---
 with st.sidebar:
     st.header("Configuration")
-    # Option pour uploader le fichier directement dans l'interface
-    uploaded_file = st.file_uploader("Chargez votre cours (PDF)", type="pdf")
+    uploaded_file = st.file_uploader("Ajouter un cours (PDF)", type="pdf")
 
-# --- INITIALISATION DU RAG ---
+# Gestion de l'upload : direction le dossier 'cours'
 if uploaded_file is not None:
-    # On doit sauvegarder le fichier uploadé temporairement pour que PyPDFLoader puisse le lire
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_file_path = tmp_file.name
+    file_path = os.path.join(cours_folder, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"Fichier ajouté dans {cours_folder} !")
 
-    with st.spinner("Analyse du document en cours..."):
-        try:
-            rag_chain = initialize_rag_chain(tmp_file_path)
-            st.success("Assistant prêt !")
-        except Exception as e:
-            st.error(f"Erreur : {e}")
-else:
-    # Optionnel : Utiliser un fichier par défaut si aucun upload
-    default_file = "mon_cours.pdf"
-    if os.path.exists(default_file):
-        rag_chain = initialize_rag_chain(default_file)
-    else:
-        st.info("Veuillez charger un fichier PDF dans la barre latérale.")
-        st.stop() # Arrête le script ici si pas de fichier
-
-# --- GESTION DE L'HISTORIQUE ---
+# --- HISTORIQUE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Afficher les anciens messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- ZONE DE CHAT ---
-if prompt := st.chat_input("Posez votre question sur le cours..."):
-    # 1. Afficher le message de l'utilisateur
+# --- ZONE DE CHAT DYNAMIQUE ---
+if prompt := st.chat_input("Posez votre question..."):
+    
+    # 1. Affichage question utilisateur
     with st.chat_message("user"):
         st.markdown(prompt)
-    # Ajouter à l'historique
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # 2. Générer la réponse
+    # 2. SELECTION ET REPONSE
     with st.chat_message("assistant"):
-        with st.spinner("Réflexion..."):
-            response = rag_chain.invoke({"input": prompt})
-            answer = response["answer"]
-            st.markdown(answer)
-    
-    # Ajouter la réponse à l'historique
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    
+        # A. On cherche les fichiers pertinents dans le dossier COURS
+        relevant_files = get_relevant_files(prompt, cours_folder)
+        
+        # Feedback visuel
+        all_pdfs_count = len(glob.glob(os.path.join(cours_folder, "*.pdf")))
+        files_names = [os.path.basename(f) for f in relevant_files]
+        
+        if len(files_names) < all_pdfs_count:
+            st.caption(f"📂 Sources ({len(files_names)}/{all_pdfs_count}) : {', '.join(files_names)}")
+        else:
+            st.caption("📂 Recherche globale sur tous les cours")
+
+        # B. On initialise le RAG (Fichiers cours + Dossier users pour le JSON)
+        if relevant_files:
+            with st.spinner("Analyse des documents sélectionnés..."):
+                # Note: on passe 'users_folder' pour qu'il trouve le JSON
+                rag_chain = initialize_rag_chain_with_files(relevant_files, users_folder)
+                
+                if rag_chain:
+                    response = rag_chain.invoke({"input": prompt})
+                    answer = response["answer"]
+                    st.markdown(answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                else:
+                    st.error("Impossible de créer la chaîne d'analyse.")
+        else:
+            st.warning("Aucun document PDF trouvé dans le dossier 'cours'.")
