@@ -4,6 +4,7 @@ import json
 import glob
 import re
 import hashlib
+from collections import Counter
 
 # --- IMPORTATIONS LANGCHAIN (Standards) ---
 from langchain_community.document_loaders import PyPDFLoader
@@ -14,12 +15,14 @@ from langchain_community.llms import Ollama
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
+
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
-st.title("🤖 Spaceflight I(A)nstitute - Accès Sécurisé")
+st.title("🤖 Spaceflight I(A)nstitute - Recherche Intelligente")
 
-# Configuration Proxy
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 # --- GESTION DES DOSSIERS ---
@@ -27,79 +30,51 @@ base_folder = "data"
 cours_folder = os.path.join(base_folder, "cours")
 users_folder = os.path.join(base_folder, "users")
 
-# Création automatique des dossiers
 for folder in [base_folder, cours_folder, users_folder]:
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-# --- 1. FONCTIONS DE SÉCURITÉ ET GESTION UTILISATEURS ---
-
+# --- 1. FONCTIONS AUTHENTIFICATION (Identique précédent) ---
 def hash_password(password):
-    """Transforme un mot de passe en empreinte SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def get_user_filepath(username):
-    """Génère un nom de fichier standardisé"""
     safe_name = re.sub(r'[^a-z0-9]', '', username.lower())
     return os.path.join(users_folder, f"{safe_name}.json")
 
 def create_user(username, password, level, tone):
     filepath = get_user_filepath(username)
-    
-    if os.path.exists(filepath):
-        return False, "Cet utilisateur existe déjà."
-    
-    # Structure JSON sécurisée : Auth séparé du Profil
+    if os.path.exists(filepath): return False, "Utilisateur existant."
     data = {
-        "auth": {
-            "username_display": username,
-            "password_hash": hash_password(password) # Stockage sécurisé
-        },
-        "profil": {
-            "niveau": level,
-            "preferences_apprentissage": {
-                "ton": tone,
-                "contenu_prefere": "mixte"
-            }
-        }
+        "auth": {"username_display": username, "password_hash": hash_password(password)},
+        "profil": {"niveau": level, "preferences_apprentissage": {"ton": tone}}
     }
-    
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return True, "Compte créé avec succès !"
-    except Exception as e:
-        return False, f"Erreur d'écriture : {e}"
+            json.dump(data, f, indent=4)
+        return True, "Succès"
+    except: return False, "Erreur écriture"
 
 def verify_credentials(username, password):
-    """Vérifie le couple user/password"""
     filepath = get_user_filepath(username)
-    
-    if not os.path.exists(filepath):
-        return None, "Utilisateur inconnu."
-    
+    if not os.path.exists(filepath): return None, "Inconnu"
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        stored_hash = data["auth"].get("password_hash")
-        input_hash = hash_password(password)
-        
-        if stored_hash == input_hash:
-            return data, "Succès"
-        else:
-            return None, "Mot de passe incorrect."
-    except Exception as e:
-        return None, f"Erreur lecture fichier : {e}"
+        with open(filepath, 'r') as f: data = json.load(f)
+        if data["auth"]["password_hash"] == hash_password(password): return data, "Succès"
+        return None, "Mot de passe faux"
+    except: return None, "Erreur fichier"
 
-# --- 2. SÉLECTION INTELLIGENTE DES FICHIERS (Ta version) ---
+# --- 2. FONCTIONS FICHIERS & CONTENU ---
+
 def get_relevant_files(prompt, pdf_folder_path):
+    """
+    Tente de trouver des fichiers par nom. 
+    Retourne TOUS les fichiers si pas de correspondance précise (pour laisser le RAG chercher dedans).
+    """
     all_pdfs = glob.glob(os.path.join(pdf_folder_path, "*.pdf"))
-    if not prompt or not all_pdfs:
-        return all_pdfs, True # True = Recherche globale
+    if not prompt or not all_pdfs: return all_pdfs, True 
 
-    # Nettoyage simple du prompt pour extraire des mots-clés
-    mots_vides = ["le", "la", "les", "de", "du", "des", "un", "une", "est", "sont", "comment", "quoi"]
+    mots_vides = ["le", "la", "les", "de", "du", "des", "un", "une", "fichier", "cours", "pdf", "sur"]
     cleaned_prompt = re.sub(r'[^\w\s]', '', prompt.lower())
     keywords = [word for word in cleaned_prompt.split() if word not in mots_vides and len(word) > 2]
     
@@ -109,33 +84,87 @@ def get_relevant_files(prompt, pdf_folder_path):
         if any(kw in filename for kw in keywords):
             selected_files.append(pdf_path)
             
-    # Cas 2 : Aucun mot clé trouvé -> Fallback global
-    if not selected_files:
-        return all_pdfs, True
+    # Si on trouve des fichiers par nom, on est contents
+    if selected_files:
+        return list(set(selected_files)), False
     
-    # Cas 3 : Sélection précise
-    return list(set(selected_files)), False
+    # Sinon, on renvoie TOUT pour que le RAG cherche le contenu "puits de potentiel" partout
+    return all_pdfs, True
 
-# --- 3. INITIALISATION RAG (Adapté à la structure JSON sécurisée) ---
-def initialize_rag_chain_dynamic(selected_files, user_data):
+
+# 1. On définit la structure de réponse attendue (JSON strict)
+class FileRequest(BaseModel):
+    veut_telecharger: bool = Field(description="Vrai si l'utilisateur demande explicitement un document, un article, un pdf ou une source complète.")
+    nom_fichier_cible: str = Field(description="Le nom exact du fichier PDF parmi la liste fournie qui correspond le mieux à la demande. Vide si aucun fichier ne correspond.")
+    raisonnement: str = Field(description="Pourquoi ce fichier a été choisi.")
+
+def smart_file_router(user_prompt, folder_path):
+    """
+    Utilise l'IA pour décider quel fichier proposer, basé sur le sens de la phrase
+    plutôt que sur des mots-clés.
+    """
+    # 1. Récupérer la liste des fichiers réels
+    all_pdfs = [os.path.basename(f) for f in glob.glob(os.path.join(folder_path, "*.pdf"))]
     
-    # Lecture dans la section "profil" et "auth" du nouveau JSON
+    if not all_pdfs:
+        return None
+
+    # 2. Préparer le LLM (On utilise le même modèle)
+    llm = Ollama(model="deepseek-r1:8b", temperature=0) # Température 0 pour être logique et strict
+    
+    # 3. Le Prompt du "Bibliothécaire"
+    router_prompt = (
+        "Tu es un bibliothécaire intelligent gérant une base de données de fichiers PDF. "
+        "Ta mission est UNIQUEMENT d'analyser si l'utilisateur veut récupérer un fichier spécifique.\n"
+        "Voici la liste EXACTE des fichiers disponibles dans ta bibliothèque :\n"
+        f"{json.dumps(all_pdfs)}\n\n"
+        "Analyses la demande de l'utilisateur. Si l'utilisateur demande un document, un article, un cours, ou une référence "
+        "qui semble correspondre au SUJET d'un des fichiers, tu dois l'identifier.\n"
+        "Exemple : Si l'utilisateur demande 'L'article de Palessandro' et que tu as 'Physique_Review_2024.pdf', et que tu sais ou devines que c'est lié, tu le sélectionnes.\n"
+        "Attention : Réponds UNIQUEMENT au format JSON strict."
+    )
+    
+    # 4. Création de la chaîne
+    parser = JsonOutputParser(pydantic_object=FileRequest)
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", router_prompt),
+        ("human", "{input}\n\nFormat JSON attendu:\n{format_instructions}")
+    ])
+    
+    chain = prompt_template | llm | parser
+    
+    try:
+        # Lancement de l'analyse
+        result = chain.invoke({
+            "input": user_prompt,
+            "format_instructions": parser.get_format_instructions()
+        })
+        
+        # 5. Vérification du résultat
+        if result["veut_telecharger"] and result["nom_fichier_cible"] in all_pdfs:
+            # On retourne le chemin complet
+            return os.path.join(folder_path, result["nom_fichier_cible"])
+            
+    except Exception as e:
+        print(f"Erreur du routeur intelligent : {e}")
+        # En cas d'erreur (si le LLM hallucine le JSON), on ne fait rien par sécurité
+        return None
+        
+    return None
+
+# --- 3. INITIALISATION RAG ---
+def initialize_rag_chain_dynamic(selected_files, user_data):
     profil = user_data.get("profil", {})
     user_name = user_data.get("auth", {}).get("username_display", "Étudiant")
-    user_level = profil.get("niveau", "Intermédiaire")
-    ai_tone = profil.get("preferences_apprentissage", {}).get("ton", "neutre")
-
-    # Chargement PDF
+    
     all_pages = []
     for pdf_path in selected_files:
         try:
             loader = PyPDFLoader(pdf_path)
             all_pages.extend(loader.load())
-        except Exception as e:
-            print(f"Erreur fichier {pdf_path}: {e}")
+        except: pass
 
-    if not all_pages:
-        return None
+    if not all_pages: return None
 
     # Vectorisation
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
@@ -143,96 +172,73 @@ def initialize_rag_chain_dynamic(selected_files, user_data):
     
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     
-    # Modèle
+    # On demande 4 morceaux de contexte
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = Ollama(model="deepseek-r1:8b")
     
-    # Prompt personnalisé
     system_prompt = (
-        f"Tu es un tuteur personnel pour {user_name}. "
-        f"Niveau de l'élève : {user_level}. "
-        f"Ton style pédagogique doit être : {ai_tone}. "
-        "Utilise le contexte fourni pour répondre. Si tu ne sais pas, dis-le."
-        "\n\n"
-        "{context}"
+        f"Tu es un tuteur pour {user_name}. Niveau : {profil.get('niveau')}. "
+        f"Ton : {profil.get('preferences_apprentissage', {}).get('ton')}. "
+        "Utilise le contexte pour répondre."
+        "\n\n{context}"
     )
     
-    prompt_template = ChatPromptTemplate.from_messages(
-        [("system", system_prompt), ("human", "{input}")]
-    )
-    
+    prompt_template = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", "{input}")])
     chain = create_stuff_documents_chain(llm, prompt_template)
+    
+    # IMPORTANT : create_retrieval_chain renvoie le contexte ("source_documents") dans la réponse
     rag = create_retrieval_chain(retriever, chain)
     return rag
 
 # --- GESTION SESSION ---
-if "user_session" not in st.session_state:
-    st.session_state["user_session"] = None
+if "user_session" not in st.session_state: st.session_state["user_session"] = None
 
-# --- INTERFACE SIDEBAR (AUTH SÉCURISÉE) ---
+# --- SIDEBAR (LOGIN) ---
 with st.sidebar:
     st.header("🔒 Authentification")
-    
-    # Cas 1 : Utilisateur Connecté
     if st.session_state["user_session"]:
-        user_name = st.session_state["user_session"]["auth"]["username_display"]
-        st.success(f"Connecté : **{user_name}**")
-        
+        st.success(f"Connecté : **{st.session_state['user_session']['auth']['username_display']}**")
         if st.button("Se déconnecter"):
             st.session_state["user_session"] = None
             st.rerun()
-            
         st.divider()
-        st.header("📚 Bibliothèque")
-        uploaded_file = st.file_uploader("Ajouter un cours (PDF)", type="pdf")
-        if uploaded_file:
-            file_path = os.path.join(cours_folder, uploaded_file.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            st.success("Cours ajouté !")
-
-    # Cas 2 : Utilisateur Non Connecté
+        uploaded = st.file_uploader("Ajouter PDF", type="pdf")
+        if uploaded:
+            with open(os.path.join(cours_folder, uploaded.name), "wb") as f: f.write(uploaded.getbuffer())
+            st.success("Ajouté !")
     else:
-        tab_login, tab_signup = st.tabs(["Connexion", "Créer compte"])
-        
-        with tab_login:
-            with st.form("login_form"):
-                u_input = st.text_input("Identifiant")
-                p_input = st.text_input("Mot de passe", type="password")
-                if st.form_submit_button("Entrer"):
-                    data, msg = verify_credentials(u_input, p_input)
-                    if data:
-                        st.session_state["user_session"] = data
-                        st.success("Connexion réussie !")
-                        st.rerun()
-                    else:
-                        st.error(msg)
-                        
-        with tab_signup:
-            with st.form("signup_form"):
-                new_user = st.text_input("Nouvel Identifiant")
-                new_pass = st.text_input("Nouveau mot de passe", type="password")
-                st.markdown("**Préférences :**")
-                new_level = st.select_slider("Niveau", options=["Débutant", "Intermédiaire", "Expert"])
-                new_tone = st.selectbox("Style IA", ["Strict & Concis", "Pédagogique & Illustré", "Socratique", "Fun & Détendu"])
-                
-                if st.form_submit_button("S'inscrire"):
-                    if new_user and new_pass:
-                        ok, msg = create_user(new_user, new_pass, new_level, new_tone)
-                        if ok:
-                            st.success("Compte créé ! Connectez-vous.")
-                        else:
-                            st.error(msg)
-                    else:
-                        st.warning("Tout remplir SVP.")
+        t1, t2 = st.tabs(["Log", "Sign"])
+        with t1:
+            with st.form("l"):
+                u, p = st.text_input("User"), st.text_input("Pass", type="password")
+                if st.form_submit_button("Go"):
+                    d, m = verify_credentials(u, p)
+                    if d: st.session_state["user_session"] = d; st.rerun()
+                    else: st.error(m)
+        with t2:
+            with st.form("s"):
+                u, p = st.text_input("New User"), st.text_input("New Pass", type="password")
+                l, t = st.select_slider("Niveau", ["A", "B", "C"]), st.selectbox("Style", ["Cool", "Strict"])
+                if st.form_submit_button("Créer"):
+                    create_user(u, p, l, t)
+                    st.success("Crée !")
 
-# --- ZONE PRINCIPALE (PROTECTION) ---
+# --- ZONE PRINCIPALE ---
+if not st.session_state["user_session"]: st.stop()
+
+if "messages" not in st.session_state: st.session_state.messages = []
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]): st.markdown(m["content"])
+
+# --- ZONE DE CHAT ---
+
+# 1. Vérification de sécurité
 if not st.session_state["user_session"]:
     st.info("👋 Veuillez vous connecter dans la barre latérale pour accéder à l'assistant.")
     st.stop()
 
-# --- HISTORIQUE CHAT ---
+# 2. Affichage de l'historique
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -240,44 +246,66 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- ZONE DE CHAT (Ta logique de tri conservée) ---
-if prompt := st.chat_input("Posez votre question sur les cours..."):
+# 3. Boucle principale (Quand l'utilisateur tape Entrée)
+if prompt := st.chat_input("Posez votre question (ex: 'Donne moi l'article de Palessandro')..."):
     
+    # A. Afficher le message utilisateur
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
+    # B. Réponse de l'Assistant
     with st.chat_message("assistant"):
-        # 1. Sélection intelligente des fichiers
-        relevant_files, is_global_search = get_relevant_files(prompt, cours_folder)
         
-        # Feedback UI
-        files_names = [os.path.basename(f) for f in relevant_files]
+        found_file_path = None
         
-        if is_global_search:
-            st.warning("⚠️ Recherche globale (aucun fichier spécifique détecté dans le titre).")
-            with st.expander("Voir les fichiers utilisés"):
-                st.write(files_names)
-        else:
-            st.success(f"🎯 Ciblage réussi sur : {', '.join(files_names)}")
+        # --- ÉTAPE 1 : ROUTEUR INTELLIGENT ---
+        # On affiche un petit statut pendant que l'IA cherche le fichier
+        with st.status("🔍 Recherche dans la bibliothèque...", expanded=False) as status:
+            found_file_path = smart_file_router(prompt, cours_folder)
+            
+            if found_file_path:
+                status.update(label="Document trouvé !", state="complete")
+            else:
+                status.update(label="Analyse du contenu...", state="complete")
 
-        # 2. Lancement du RAG avec le profil utilisateur connecté
+        # Si le routeur a trouvé un fichier, on affiche le bouton IMMÉDIATEMENT
+        if found_file_path:
+            filename = os.path.basename(found_file_path)
+            st.success(f"📂 J'ai trouvé ce document pour vous : **{filename}**")
+            
+            with open(found_file_path, "rb") as f:
+                st.download_button(
+                    label=f"⬇️ Télécharger {filename}",
+                    data=f.read(),
+                    file_name=filename,
+                    mime="application/pdf"
+                )
+            
+            # On ajoute une note invisible pour que l'IA sache qu'elle a déjà donné le fichier
+            prompt += f" (Note système : Tu as déjà proposé le fichier {filename} en téléchargement. Confirme-le poliment.)"
+
+        # --- ÉTAPE 2 : RAG (Réponse textuelle) ---
+        # On récupère les fichiers pour le contexte (méthode classique)
+        relevant_files, is_global = get_relevant_files(prompt, cours_folder)
+        
         if relevant_files:
-            with st.spinner("Analyse en cours..."):
+            with st.spinner("Rédaction de la réponse..."):
                 try:
+                    # On lance la chaîne RAG avec le profil utilisateur
                     rag_chain = initialize_rag_chain_dynamic(relevant_files, st.session_state["user_session"])
                 
                     if rag_chain:
                         response = rag_chain.invoke({"input": prompt})
                         answer = response["answer"]
                         
-                        # Nettoyage DeepSeek
+                        # Nettoyage des balises <think> de DeepSeek
                         if "</think>" in answer:
                             answer = answer.split("</think>")[-1].strip()
                         
                         st.markdown(answer)
                         st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
-                    st.error(f"Erreur technique : {e}")
+                    st.error(f"Une erreur est survenue : {e}")
         else:
-            st.error("Aucun document disponible dans la bibliothèque.")
+            st.warning("Je n'ai aucun document pour répondre à cette demande.")
