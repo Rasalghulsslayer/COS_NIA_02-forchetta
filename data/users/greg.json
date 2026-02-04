@@ -1,0 +1,13 @@
+{
+    "auth": {
+        "username_display": "Greg",
+        "password_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
+    },
+    "profil": {
+        "niveau": "Intermédiaire",
+        "preferences_apprentissage": {
+            "ton": "Fun & Détendu",
+            "contenu_prefere": "mixte"
+        }
+    }
+}

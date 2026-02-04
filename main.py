@@ -3,6 +3,7 @@ import os
 import json
 import glob
 import re
+import hashlib
 
 # --- IMPORTATIONS LANGCHAIN (Standards) ---
 from langchain_community.document_loaders import PyPDFLoader
@@ -16,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
-st.title("🤖 Spaceflight I(A)nstitute")
+st.title("🤖 Spaceflight I(A)nstitute - Accès Sécurisé")
 
 # Configuration Proxy
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
@@ -31,46 +32,71 @@ for folder in [base_folder, cours_folder, users_folder]:
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-# --- 1. FONCTIONS UTILITAIRES UTILISATEURS ---
-def get_user_list():
-    """Récupère la liste des fichiers JSON dans le dossier users"""
-    files = glob.glob(os.path.join(users_folder, "*.json"))
-    # On retourne juste le nom du fichier sans l'extension
-    return [os.path.splitext(os.path.basename(f))[0] for f in files]
+# --- 1. FONCTIONS DE SÉCURITÉ ET GESTION UTILISATEURS ---
 
-def create_user(username, level, tone):
-    """Crée un fichier JSON pour un nouvel utilisateur"""
-    filename = f"{username.lower().replace(' ', '_')}.json"
-    filepath = os.path.join(users_folder, filename)
+def hash_password(password):
+    """Transforme un mot de passe en empreinte SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def get_user_filepath(username):
+    """Génère un nom de fichier standardisé"""
+    safe_name = re.sub(r'[^a-z0-9]', '', username.lower())
+    return os.path.join(users_folder, f"{safe_name}.json")
+
+def create_user(username, password, level, tone):
+    filepath = get_user_filepath(username)
     
+    if os.path.exists(filepath):
+        return False, "Cet utilisateur existe déjà."
+    
+    # Structure JSON sécurisée : Auth séparé du Profil
     data = {
-        "utilisateur": {
-            "prenom": username,
-            "niveau": level, # Ex: Débutant, Expert
+        "auth": {
+            "username_display": username,
+            "password_hash": hash_password(password) # Stockage sécurisé
+        },
+        "profil": {
+            "niveau": level,
             "preferences_apprentissage": {
                 "ton": tone,
                 "contenu_prefere": "mixte"
             }
         }
     }
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-    return filename
+    
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        return True, "Compte créé avec succès !"
+    except Exception as e:
+        return False, f"Erreur d'écriture : {e}"
 
-def load_user_preferences(username_file):
-    """Charge les données du fichier JSON sélectionné"""
-    filepath = os.path.join(users_folder, f"{username_file}.json")
+def verify_credentials(username, password):
+    """Vérifie le couple user/password"""
+    filepath = get_user_filepath(username)
+    
+    if not os.path.exists(filepath):
+        return None, "Utilisateur inconnu."
+    
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return None
+            data = json.load(f)
+            
+        stored_hash = data["auth"].get("password_hash")
+        input_hash = hash_password(password)
+        
+        if stored_hash == input_hash:
+            return data, "Succès"
+        else:
+            return None, "Mot de passe incorrect."
+    except Exception as e:
+        return None, f"Erreur lecture fichier : {e}"
 
-# --- 2. SÉLECTION INTELLIGENTE DES FICHIERS ---
+# --- 2. SÉLECTION INTELLIGENTE DES FICHIERS (Ta version) ---
 def get_relevant_files(prompt, pdf_folder_path):
     all_pdfs = glob.glob(os.path.join(pdf_folder_path, "*.pdf"))
     if not prompt or not all_pdfs:
-        return all_pdfs 
+        return all_pdfs, True # True = Recherche globale
 
     # Nettoyage simple du prompt pour extraire des mots-clés
     mots_vides = ["le", "la", "les", "de", "du", "des", "un", "une", "est", "sont", "comment", "quoi"]
@@ -80,26 +106,24 @@ def get_relevant_files(prompt, pdf_folder_path):
     selected_files = []
     for pdf_path in all_pdfs:
         filename = os.path.basename(pdf_path).lower()
-        # On cherche si un mot clé est dans le nom
         if any(kw in filename for kw in keywords):
             selected_files.append(pdf_path)
             
-    # Cas 2 : Aucun mot clé trouvé dans les titres -> Fallback
-    # Si aucun mot clé ne correspond, on retourne tout (par sécurité)
+    # Cas 2 : Aucun mot clé trouvé -> Fallback global
     if not selected_files:
-        return all_pdfs, True # True signifie "J'ai tout renvoyé par défaut"
+        return all_pdfs, True
     
-    # Cas 3 : On a trouvé des fichiers spécifiques
-    return list(set(selected_files)), False # False signifie "C'est une sélection précise"
+    # Cas 3 : Sélection précise
+    return list(set(selected_files)), False
 
-# --- 3. INITIALISATION RAG (Pas de cache ici car context dynamique) ---
-def initialize_rag_chain_dynamic(selected_files, user_config):
+# --- 3. INITIALISATION RAG (Adapté à la structure JSON sécurisée) ---
+def initialize_rag_chain_dynamic(selected_files, user_data):
     
-    # Extraction des infos utilisateur
-    user_info = user_config.get("utilisateur", {})
-    user_name = user_info.get("prenom", "Étudiant")
-    user_level = user_info.get("niveau", "Intermédiaire")
-    ai_tone = user_info.get("preferences_apprentissage", {}).get("ton", "neutre")
+    # Lecture dans la section "profil" et "auth" du nouveau JSON
+    profil = user_data.get("profil", {})
+    user_name = user_data.get("auth", {}).get("username_display", "Étudiant")
+    user_level = profil.get("niveau", "Intermédiaire")
+    ai_tone = profil.get("preferences_apprentissage", {}).get("ton", "neutre")
 
     # Chargement PDF
     all_pages = []
@@ -124,7 +148,7 @@ def initialize_rag_chain_dynamic(selected_files, user_config):
     # Modèle
     llm = Ollama(model="deepseek-r1:8b")
     
-    # Prompt personnalisé selon le JSON
+    # Prompt personnalisé
     system_prompt = (
         f"Tu es un tuteur personnel pour {user_name}. "
         f"Niveau de l'élève : {user_level}. "
@@ -142,102 +166,112 @@ def initialize_rag_chain_dynamic(selected_files, user_config):
     rag = create_retrieval_chain(retriever, chain)
     return rag
 
-# --- INTERFACE SIDEBAR (GESTION COMPTES) ---
+# --- GESTION SESSION ---
+if "user_session" not in st.session_state:
+    st.session_state["user_session"] = None
+
+# --- INTERFACE SIDEBAR (AUTH SÉCURISÉE) ---
 with st.sidebar:
-    st.header("👤 Espace Membre")
+    st.header("🔒 Authentification")
     
-    # Liste des utilisateurs existants
-    existing_users = get_user_list()
-    
-    mode = st.radio("Option", ["Connexion", "Nouveau Profil"], label_visibility="collapsed")
-    
-    current_user_data = None
-    
-    if mode == "Connexion":
-        if existing_users:
-            selected_user = st.selectbox("Choisir un profil", existing_users)
-            current_user_data = load_user_preferences(selected_user)
-            if current_user_data:
-                u_info = current_user_data["utilisateur"]
-                st.info(f"👋 Bonjour **{u_info['prenom']}**\n\nNiveau : {u_info['niveau']}\nStyle : {u_info['preferences_apprentissage']['ton']}")
-        else:
-            st.warning("Aucun utilisateur. Créez un profil.")
+    # Cas 1 : Utilisateur Connecté
+    if st.session_state["user_session"]:
+        user_name = st.session_state["user_session"]["auth"]["username_display"]
+        st.success(f"Connecté : **{user_name}**")
+        
+        if st.button("Se déconnecter"):
+            st.session_state["user_session"] = None
+            st.rerun()
             
-    else: # Nouveau Profil
-        with st.form("new_user"):
-            new_name = st.text_input("Prénom")
-            new_level = st.select_slider("Niveau", options=["Débutant", "Intermédiaire", "Expert"])
-            new_tone = st.selectbox("Style de l'IA", ["Strict & Concis", "Pédagogique & Illustré", "Socratique (pose des questions)", "Avec un accent africain", "Avec un accent québécois"])
-            if st.form_submit_button("Créer"):
-                if new_name:
-                    create_user(new_name, new_level, new_tone)
-                    st.success("Profil créé ! Passez en mode 'Connexion'.")
-                    st.rerun()
+        st.divider()
+        st.header("📚 Bibliothèque")
+        uploaded_file = st.file_uploader("Ajouter un cours (PDF)", type="pdf")
+        if uploaded_file:
+            file_path = os.path.join(cours_folder, uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            st.success("Cours ajouté !")
 
-    st.divider()
-    st.header("📚 Bibliothèque")
-    uploaded_file = st.file_uploader("Ajouter un cours (PDF)", type="pdf")
-    if uploaded_file:
-        file_path = os.path.join(cours_folder, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success("Cours ajouté !")
+    # Cas 2 : Utilisateur Non Connecté
+    else:
+        tab_login, tab_signup = st.tabs(["Connexion", "Créer compte"])
+        
+        with tab_login:
+            with st.form("login_form"):
+                u_input = st.text_input("Identifiant")
+                p_input = st.text_input("Mot de passe", type="password")
+                if st.form_submit_button("Entrer"):
+                    data, msg = verify_credentials(u_input, p_input)
+                    if data:
+                        st.session_state["user_session"] = data
+                        st.success("Connexion réussie !")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                        
+        with tab_signup:
+            with st.form("signup_form"):
+                new_user = st.text_input("Nouvel Identifiant")
+                new_pass = st.text_input("Nouveau mot de passe", type="password")
+                st.markdown("**Préférences :**")
+                new_level = st.select_slider("Niveau", options=["Débutant", "Intermédiaire", "Expert"])
+                new_tone = st.selectbox("Style IA", ["Strict & Concis", "Pédagogique & Illustré", "Socratique", "Fun & Détendu"])
+                
+                if st.form_submit_button("S'inscrire"):
+                    if new_user and new_pass:
+                        ok, msg = create_user(new_user, new_pass, new_level, new_tone)
+                        if ok:
+                            st.success("Compte créé ! Connectez-vous.")
+                        else:
+                            st.error(msg)
+                    else:
+                        st.warning("Tout remplir SVP.")
 
-# --- ZONE DE CHAT ---
-if not current_user_data:
-    st.info("👈 Veuillez sélectionner ou créer un profil utilisateur dans la barre latérale pour commencer.")
+# --- ZONE PRINCIPALE (PROTECTION) ---
+if not st.session_state["user_session"]:
+    st.info("👋 Veuillez vous connecter dans la barre latérale pour accéder à l'assistant.")
     st.stop()
 
-# Gestion historique
+# --- HISTORIQUE CHAT ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Affichage historique
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Input Utilisateur
+# --- ZONE DE CHAT (Ta logique de tri conservée) ---
 if prompt := st.chat_input("Posez votre question sur les cours..."):
     
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # ... DANS LA ZONE DE CHAT ...
-
-    # 2. SELECTION ET REPONSE
     with st.chat_message("assistant"):
-        # A. On appelle la nouvelle version de la fonction (récupère 2 variables)
+        # 1. Sélection intelligente des fichiers
         relevant_files, is_global_search = get_relevant_files(prompt, cours_folder)
         
-        # Affichage du feedback utilisateur
+        # Feedback UI
         files_names = [os.path.basename(f) for f in relevant_files]
-        st.caption(f"🧠 Analyse basée sur : {', '.join(files_names)}")
         
         if is_global_search:
-            # Cas où aucun mot clé n'a matché
-            st.warning("⚠️ Aucun fichier spécifique identifié par le titre. Recherche élargie à tous les cours.")
-            with st.expander("Voir les détails (Debug)"):
-                st.write(f"Question analysée : {prompt}")
-                st.write(f"Fichiers disponibles : {files_names}")
+            st.warning("⚠️ Recherche globale (aucun fichier spécifique détecté dans le titre).")
+            with st.expander("Voir les fichiers utilisés"):
+                st.write(files_names)
         else:
-            # Cas où le filtrage a fonctionné
-            st.success(f"🎯 Ciblage réussi : {len(files_names)} document(s) pertinent(s).")
-            st.caption(f"Sources : {', '.join(files_names)}")
+            st.success(f"🎯 Ciblage réussi sur : {', '.join(files_names)}")
 
-        # B. On initialise le RAG
+        # 2. Lancement du RAG avec le profil utilisateur connecté
         if relevant_files:
-             # ... le reste de ton code d'initialisation reste identique ...
-            with st.spinner("Analyse des documents..."):
-                try :
-                    rag_chain = initialize_rag_chain_dynamic(relevant_files, current_user_data)
+            with st.spinner("Analyse en cours..."):
+                try:
+                    rag_chain = initialize_rag_chain_dynamic(relevant_files, st.session_state["user_session"])
                 
                     if rag_chain:
                         response = rag_chain.invoke({"input": prompt})
                         answer = response["answer"]
                         
-                        # Nettoyage optionnel des balises <think>
+                        # Nettoyage DeepSeek
                         if "</think>" in answer:
                             answer = answer.split("</think>")[-1].strip()
                         
@@ -245,3 +279,5 @@ if prompt := st.chat_input("Posez votre question sur les cours..."):
                         st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Erreur technique : {e}")
+        else:
+            st.error("Aucun document disponible dans la bibliothèque.")
