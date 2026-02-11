@@ -27,39 +27,39 @@ import streamlit_mermaid as st_mermaid
 
 def clean_mermaid_code(text):
     """
-    Extrait uniquement le contenu entre ```mermaid et ```.
-    Si pas de balises, essaie de nettoyer le texte brut.
+    Nettoie le code Mermaid pour éviter les erreurs de syntaxe 10.2.4.
     """
-    # 1. On cherche le bloc de code spécifique
+    # 1. Supprimer la réflexion de DeepSeek (<think>...</think>)
+    if "</think>" in text:
+        text = text.split("</think>")[-1]
+
+    # 2. Chercher le bloc de code Mermaid avec une Regex (plus précis)
     pattern = r"```mermaid\s*(.*?)\s*```"
-    match = re.search(pattern, text, re.DOTALL) # DOTALL permet de capturer les sauts de ligne
+    match = re.search(pattern, text, re.DOTALL)
     
     if match:
-        # On a trouvé un bloc propre, on retourne juste le contenu
-        return match.group(1).strip()
-    
-    # 2. Si pas de bloc, on nettoie les résidus Markdown classiques au cas où
-    text = text.replace("```mermaid", "").replace("```", "")
-    
-    # 3. On supprime les phrases d'intro courantes de l'IA (optionnel mais utile)
-    lines = text.split('\n')
+        code = match.group(1).strip()
+    else:
+        # Si pas de balises, on essaie de nettoyer le texte brut
+        code = text.replace("```mermaid", "").replace("```", "").strip()
+
+    # 3. Validation et Correction de secours
+    lines = code.split('\n')
     clean_lines = []
-    started = False
-    possible_starts = ["graph ", "mindmap", "flowchart ", "sequenceDiagram", "gantt", "classDiagram"]
     
     for line in lines:
-        # On garde tout dès qu'on détecte un mot clé Mermaid au début d'une ligne
-        if any(line.strip().startswith(k) for k in possible_starts):
-            started = True
-        
-        if started:
+        line = line.strip()
+        # On ne garde que les lignes qui ressemblent à du code Mermaid ou des commentaires
+        if line and (line.startswith("graph") or "-->" in line or line.startswith("subgraph") or line.startswith("end")):
             clean_lines.append(line)
-    
-    # Si on a trouvé un début valide, on renvoie ça, sinon on renvoie le texte nettoyé brut
-    if clean_lines:
-        return "\n".join(clean_lines).strip()
+            
+    final_code = "\n".join(clean_lines)
+
+    # Si l'IA a oublié de déclarer le type de graphique, on le force
+    if not final_code.startswith("graph"):
+        final_code = "graph TD\n" + final_code
         
-    return text.strip()
+    return final_code
 
 
 # --- CONFIGURATION DE LA PAGE ---
@@ -291,9 +291,19 @@ PROMPT_MODES = {
     ),
     
     "🧠 Carte Mentale": (
-        "Ton but est de structurer l'information hiérarchiquement. "
-        "Réponds UNIQUEMENT avec un bloc de code au format 'Mermaid.js' (syntaxe graph TD). "
-        "N'ajoute aucun texte avant ou après le bloc de code."
+        "Tu es un expert en visualisation de données. "
+        "Ta mission : Créer une carte mentale hiérarchique avec Mermaid.js. "
+        "RÈGLES DE SYNTAXE STRICTES :\n"
+        "1. Utilise UNIQUEMENT la syntaxe 'graph TD' (et non 'mindmap').\n"
+        "2. IMPORTANT : Mets TOUS les textes des nœuds entre guillemets doubles. Ex: id[\"Mon Texte Ici\"]\n"
+        "3. Ne mets JAMAIS de parenthèses () directement dans le texte sans guillemets.\n"
+        "4. Réponds UNIQUEMENT avec le bloc de code ```mermaid ... ```.\n\n"
+        "Exemple valide :\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "  A[\"Sujet Principal\"] --> B[\"Idée 1 (Détail)\"]\n"
+        "  A --> C[\"Idée 2 : L'exemple\"]\n"
+        "```"
     ),
     
     "📝 Fiches de Révision": (
