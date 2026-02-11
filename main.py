@@ -276,47 +276,39 @@ def generate_pptx_from_json(slides_data):
     prs.save(output_file)
     return output_file
 
-# --- PROMPTS SPÉCIAUX (Templates) ---
-
+# --- PROMPTS SPÉCIAUX (Formats uniquement) ---
 PROMPT_MODES = {
-    "Chat Standard": "Réponds normalement à la question en utilisant le contexte.",
+    "Chat Standard": "Réponds de manière naturelle et pédagogique.",
     
     "🎙️ Résumé Audio (Podcast)": (
-        "Tu es un animateur de podcast passionné. "
-        "Rédige un script pour un épisode court (3 minutes max) qui résume les points clés du contexte fourni. "
-        "Utilise un ton parlé, dynamique, avec des phrases simples et engageantes. "
-        "Ne mets pas de balises de script (comme [Musique]), juste le texte à lire."
+        "Adopte le persona d'un animateur de podcast dynamique. "
+        "Ton but est de créer un script oral engageant. "
+        "Ne mets pas de balises de mise en scène (musique, applaudissements), juste le texte parlé."
+        "Ne lis SURTOUT PAS la ponctuation"
     ),
     
     "🧠 Carte Mentale": (
-        "Crée une carte mentale logique sur le sujet. "
-        "IMPORTANT : Réponds UNIQUEMENT avec un bloc de code. "
-        "Utilise la syntaxe 'graph TD' (Top-Down). "
-        "Exemple :\n"
-        "```mermaid\n"
-        "graph TD\n"
-        "A[Concept Central] --> B(Idée 1)\n"
-        "A --> C(Idée 2)\n"
-        "```"
+        "Ton but est de structurer l'information hiérarchiquement. "
+        "Réponds UNIQUEMENT avec un bloc de code au format 'Mermaid.js' (syntaxe graph TD). "
+        "N'ajoute aucun texte avant ou après le bloc de code."
     ),
     
-    # 👇 ICI : J'ai doublé les accolades {{ }} pour le JSON
     "📝 Fiches de Révision": (
-        "Génère 5 fiches de révision basées sur le contexte. "
+        "Ton but est de créer un outil de mémorisation. "
         "Tu DOIS répondre UNIQUEMENT au format JSON strict (liste d'objets). "
-        "Format attendu : [{{'question': 'Quelle est la...', 'reponse': 'C est...'}}, {{'question': '...', 'reponse': '...'}}]"
+        "Format attendu : [{{'question': '...', 'reponse': '...'}}, {{'question': '...', 'reponse': '...'}}]"
     ),
     
-    # 👇 ICI AUSSI : Doublage des accolades pour le PPTX
     "📊 Diapositives (PPTX)": (
-        "Génère le contenu pour une présentation PowerPoint de 5 diapositives résumant le cours. "
+        "Ton but est de synthétiser pour une présentation. "
         "Tu DOIS répondre UNIQUEMENT au format JSON strict. "
-        "Format attendu : [{{'titre': 'Titre Slide 1', 'points': ['Point A', 'Point B']}}, ...]"
+        "Format attendu : [{{'titre': '...', 'points': ['...', '...']}}, ...]"
     )
 }
 
-# --- 3. INITIALISATION RAG (Corrigée pour accepter les modes) ---
+# --- 3. INITIALISATION RAG (Corrigée et compatible) ---
 def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
+    # Note : J'ai renommé l'argument en 'custom_prompt' pour correspondre à ton appel
     
     # 1. Chargement des données 
     profil = user_data.get("profil", {})
@@ -337,7 +329,7 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
 
     if not all_pages: return None
 
-    # 3. Vectorisation (inchangé)
+    # 3. Vectorisation
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
     chunks = text_splitter.split_documents(all_pages)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -345,21 +337,36 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = Ollama(model="deepseek-r1:8b", temperature=0)
     
-    # 4. GESTION DU PROMPT MODIFIÉE
-    if custom_prompt:
-        # Mode spécial (reste inchangé)
-        system_prompt = f"{custom_prompt}\n\nContexte:\n{{context}}"
-    else:
-        # CAS B : Chat standard enrichi
-        system_prompt = (
-            f"Tu es un assistant expert pour le Spaceflight Institute. "
-            f"Ton interlocuteur est : {user_name}, qui a le grade de {user_role}. "
-            f"Son niveau de connaissances est : {user_level}. "
-            f"Son objectif actuel est : {user_goal}. "
-            f"Ton style de réponse doit être : {ai_tone}. "
-            "Utilise le contexte fourni pour répondre avec précision."
-            "\n\nContexte:\n{context}"
-        )
+    # 4. CONSTRUCTION DU PROMPT SYSTÈME UNIFIÉ
+    
+    # A. Définition du format (Standard ou Spécial)
+    # Si custom_prompt est fourni (ex: mode Podcast), on l'utilise. Sinon, consigne standard.
+    format_instruction = custom_prompt if custom_prompt else "Réponds normalement."
+    
+    # B. Le Prompt Système Complet (Sandwich Anti-Hallucination)
+    system_prompt = (
+        f"Tu es un assistant expert pour le Spaceflight Institute. "
+        f"Ton interlocuteur est : {user_name}, qui a le grade de {user_role}. "
+        f"Son niveau de connaissances est : {user_level}. "
+        f"Son objectif actuel est : {user_goal}. "
+        f"Ton style de réponse doit être : {ai_tone}. "
+        "Utilise le contexte fourni pour répondre avec précision."
+        "\n\nContexte:\n{context}"
+        
+        "--- INSTRUCTION DE FORMAT ---\n"
+        f"{format_instruction}\n"
+        "------------------------------\n\n"
+        
+        "--- LOGIQUE DE RAISONNEMENT STRICTE ---\n"
+        "Tu disposes d'extraits de documents ci-dessous (CONTEXTE). Tu dois évaluer leur pertinence par rapport à la question.\n"
+        "1. ANALYSE : Le sujet de la question est-il traité dans le CONTEXTE ?\n"
+        "2. CAS 'CONTEXTE PERTINENT' : Si oui, utilise les informations du contexte pour générer le format demandé.\n"
+        "3. CAS 'HORS SUJET' : Si la question n'a AUCUN rapport avec le contexte (ex: question sur des tartes alors que le contexte est de la physique), IGNORE TOTALEMENT LE CONTEXTE. Utilise tes connaissances générales pour générer le format demandé.\n"
+        "---------------------------------------\n\n"
+        
+        "--- CONTEXTE ---\n"
+        "{context}"
+    )
     
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
