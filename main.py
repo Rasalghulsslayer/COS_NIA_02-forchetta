@@ -18,6 +18,48 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
+# --- IMPORTATIONS RESTITUTION ---
+from gtts import gTTS
+from pptx import Presentation
+from pptx.util import Inches, Pt
+import streamlit_mermaid as st_mermaid
+
+def clean_mermaid_code(text):
+    """
+    Extrait uniquement le contenu entre ```mermaid et ```.
+    Si pas de balises, essaie de nettoyer le texte brut.
+    """
+    # 1. On cherche le bloc de code spécifique
+    pattern = r"```mermaid\s*(.*?)\s*```"
+    match = re.search(pattern, text, re.DOTALL) # DOTALL permet de capturer les sauts de ligne
+    
+    if match:
+        # On a trouvé un bloc propre, on retourne juste le contenu
+        return match.group(1).strip()
+    
+    # 2. Si pas de bloc, on nettoie les résidus Markdown classiques au cas où
+    text = text.replace("```mermaid", "").replace("```", "")
+    
+    # 3. On supprime les phrases d'intro courantes de l'IA (optionnel mais utile)
+    lines = text.split('\n')
+    clean_lines = []
+    started = False
+    possible_starts = ["graph ", "mindmap", "flowchart ", "sequenceDiagram", "gantt", "classDiagram"]
+    
+    for line in lines:
+        # On garde tout dès qu'on détecte un mot clé Mermaid au début d'une ligne
+        if any(line.strip().startswith(k) for k in possible_starts):
+            started = True
+        
+        if started:
+            clean_lines.append(line)
+    
+    # Si on a trouvé un début valide, on renvoie ça, sinon on renvoie le texte nettoyé brut
+    if clean_lines:
+        return "\n".join(clean_lines).strip()
+        
+    return text.strip()
+
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
@@ -152,11 +194,103 @@ def smart_file_router(user_prompt, folder_path):
         
     return None
 
-# --- 3. INITIALISATION RAG ---
-def initialize_rag_chain_dynamic(selected_files, user_data):
+
+# --- 3. FONCTIONS DE GÉNÉRATION DE FORMATS ---
+def generate_audio(text, lang='fr'):
+    """Génère un fichier MP3 à partir du texte"""
+    try:
+        tts = gTTS(text=text, lang=lang, slow=False)
+        filename = "temp_audio.mp3"
+        tts.save(filename)
+        return filename
+    except Exception as e:
+        return None
+
+def generate_pptx_from_json(slides_data):
+    """Crée un fichier PowerPoint à partir d'une liste de dictionnaires"""
+    prs = Presentation()
+    
+    # Titre
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = "Synthèse Générée par IA"
+    subtitle.text = "Spaceflight Institute"
+
+    # Contenu
+    bullet_slide_layout = prs.slide_layouts[1]
+    
+    for slide_content in slides_data:
+        slide = prs.slides.add_slide(bullet_slide_layout)
+        shapes = slide.shapes
+        title_shape = shapes.title
+        body_shape = shapes.placeholders[1]
+        
+        title_shape.text = slide_content.get("titre", "Sans titre")
+        tf = body_shape.text_frame
+        
+        points = slide_content.get("points", [])
+        if points:
+            tf.text = points[0]
+            for point in points[1:]:
+                p = tf.add_paragraph()
+                p.text = point
+                p.level = 0
+
+    output_file = "synthese_cours.pptx"
+    prs.save(output_file)
+    return output_file
+
+# --- PROMPTS SPÉCIAUX (Templates) ---
+
+PROMPT_MODES = {
+    "Chat Standard": "Réponds normalement à la question en utilisant le contexte.",
+    
+    "🎙️ Résumé Audio (Podcast)": (
+        "Tu es un animateur de podcast passionné. "
+        "Rédige un script pour un épisode court (3 minutes max) qui résume les points clés du contexte fourni. "
+        "Utilise un ton parlé, dynamique, avec des phrases simples et engageantes. "
+        "Ne mets pas de balises de script (comme [Musique]), juste le texte à lire."
+    ),
+    
+    "🧠 Carte Mentale": (
+        "Crée une carte mentale logique sur le sujet. "
+        "IMPORTANT : Réponds UNIQUEMENT avec un bloc de code. "
+        "Utilise la syntaxe 'graph TD' (Top-Down). "
+        "Exemple :\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "A[Concept Central] --> B(Idée 1)\n"
+        "A --> C(Idée 2)\n"
+        "```"
+    ),
+    
+    # 👇 ICI : J'ai doublé les accolades {{ }} pour le JSON
+    "📝 Fiches de Révision": (
+        "Génère 5 fiches de révision basées sur le contexte. "
+        "Tu DOIS répondre UNIQUEMENT au format JSON strict (liste d'objets). "
+        "Format attendu : [{{'question': 'Quelle est la...', 'reponse': 'C est...'}}, {{'question': '...', 'reponse': '...'}}]"
+    ),
+    
+    # 👇 ICI AUSSI : Doublage des accolades pour le PPTX
+    "📊 Diapositives (PPTX)": (
+        "Génère le contenu pour une présentation PowerPoint de 5 diapositives résumant le cours. "
+        "Tu DOIS répondre UNIQUEMENT au format JSON strict. "
+        "Format attendu : [{{'titre': 'Titre Slide 1', 'points': ['Point A', 'Point B']}}, ...]"
+    )
+}
+
+# --- 3. INITIALISATION RAG (Corrigée pour accepter les modes) ---
+def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
+    
+    # 1. Chargement des données utilisateur habituelles
     profil = user_data.get("profil", {})
     user_name = user_data.get("auth", {}).get("username_display", "Étudiant")
-    
+    user_level = profil.get("niveau", "Intermédiaire")
+    ai_tone = profil.get("preferences_apprentissage", {}).get("ton", "neutre")
+
+    # 2. Chargement des PDF (inchangé)
     all_pages = []
     for pdf_path in selected_files:
         try:
@@ -166,28 +300,34 @@ def initialize_rag_chain_dynamic(selected_files, user_data):
 
     if not all_pages: return None
 
-    # Vectorisation
+    # 3. Vectorisation (inchangé)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
     chunks = text_splitter.split_documents(all_pages)
-    
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
-    
-    # On demande 4 morceaux de contexte
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = Ollama(model="deepseek-r1:8b")
     
-    system_prompt = (
-        f"Tu es un tuteur pour {user_name}. Niveau : {profil.get('niveau')}. "
-        f"Ton : {profil.get('preferences_apprentissage', {}).get('ton')}. "
-        "Utilise le contexte pour répondre."
-        "\n\n{context}"
-    )
+    # 4. GESTION DU PROMPT (C'est ici que ça change)
+    if custom_prompt:
+        # CAS A : On a un mode spécial (Podcast, JSON, PPTX...)
+        # On ignore le profil utilisateur pour se concentrer sur le format technique
+        system_prompt = f"{custom_prompt}\n\nContexte:\n{{context}}"
+    else:
+        # CAS B : Chat standard (On utilise le profil utilisateur)
+        system_prompt = (
+            f"Tu es un tuteur pour {user_name}. Niveau : {user_level}. "
+            f"Ton style : {ai_tone}. "
+            "Utilise le contexte pour répondre."
+            "\n\n{context}"
+        )
     
-    prompt_template = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", "{input}")])
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}")
+    ])
+    
     chain = create_stuff_documents_chain(llm, prompt_template)
-    
-    # IMPORTANT : create_retrieval_chain renvoie le contexte ("source_documents") dans la réponse
     rag = create_retrieval_chain(retriever, chain)
     return rag
 
@@ -199,6 +339,12 @@ with st.sidebar:
     st.header("🔒 Authentification")
     if st.session_state["user_session"]:
         st.success(f"Connecté : **{st.session_state['user_session']['auth']['username_display']}**")
+        st.divider()
+        st.header("⚙️ Mode de Sortie")
+        selected_mode = st.radio(
+            "Format de la réponse :",
+            list(PROMPT_MODES.keys())
+        )
         if st.button("Se déconnecter"):
             st.session_state["user_session"] = None
             st.rerun()
@@ -285,27 +431,97 @@ if prompt := st.chat_input("Posez votre question (ex: 'Donne moi l'article de Pa
             # On ajoute une note invisible pour que l'IA sache qu'elle a déjà donné le fichier
             prompt += f" (Note système : Tu as déjà proposé le fichier {filename} en téléchargement. Confirme-le poliment.)"
 
-        # --- ÉTAPE 2 : RAG (Réponse textuelle) ---
-        # On récupère les fichiers pour le contexte (méthode classique)
+        # ... (Après le bloc de téléchargement de fichier) ...
+
+        # ÉTAPE 2 : RAG AVEC MODES SPÉCIAUX
         relevant_files, is_global = get_relevant_files(prompt, cours_folder)
         
         if relevant_files:
-            with st.spinner("Rédaction de la réponse..."):
+            with st.spinner(f"Génération en mode : {selected_mode}..."):
                 try:
-                    # On lance la chaîne RAG avec le profil utilisateur
-                    rag_chain = initialize_rag_chain_dynamic(relevant_files, st.session_state["user_session"])
-                
+                    # 1. Déterminer si on utilise un prompt spécial ou le standard
+                    custom_instruction = None
+                    if selected_mode != "Chat Standard":
+                        custom_instruction = PROMPT_MODES[selected_mode]
+
+                    # 2. On crée la chaîne AVEC l'instruction spéciale (si elle existe)
+                    rag_chain = initialize_rag_chain_dynamic(
+                        relevant_files, 
+                        st.session_state["user_session"],
+                        custom_prompt=custom_instruction # <-- C'est ici que la magie opère
+                    )
+                    
                     if rag_chain:
+                        # 3. Exécution
                         response = rag_chain.invoke({"input": prompt})
-                        answer = response["answer"]
+                        raw_answer = response["answer"]
+
+                        # Nettoyage DeepSeek (<think>)
+                        final_content = raw_answer
+                        if "</think>" in raw_answer:
+                            final_content = raw_answer.split("</think>")[-1].strip()
                         
-                        # Nettoyage des balises <think> de DeepSeek
-                        if "</think>" in answer:
-                            answer = answer.split("</think>")[-1].strip()
+                        # Nettoyage Markdown (le LLM met souvent ```json ... ```)
+                        final_content_clean = final_content.replace("```json", "").replace("```mermaid", "").replace("```", "").strip()
+
+                        # 4. AFFICHAGE SELON LE MODE
+                        if selected_mode == "Chat Standard":
+                            st.markdown(final_content)
                         
-                        st.markdown(answer)
-                        st.session_state.messages.append({"role": "assistant", "content": answer})
+                        elif selected_mode == "🎙️ Résumé Audio (Podcast)":
+                            st.markdown("### 🎙️ Podcast")
+                            with st.expander("Voir le script"):
+                                st.write(final_content)
+                            audio_file = generate_audio(final_content)
+                            if audio_file: st.audio(audio_file)
+                        
+                        elif selected_mode == "🧠 Carte Mentale":
+                            st.markdown("### 🧠 Carte Mentale")
+                        
+                            # Utilisation de la fonction de nettoyage robuste
+                            mermaid_code = clean_mermaid_code(raw_answer)
+                        
+                            try:
+                                # On affiche le diagramme
+                                st_mermaid.st_mermaid(mermaid_code, height="500px")
+                            except Exception as e:
+                                # Si ça plante encore, on affiche l'erreur et le code pour déboguer
+                                st.error("Erreur de syntaxe Mermaid. L'IA a généré du code invalide.")
+                                with st.expander("Voir le code généré (Debug)"):
+                                    st.code(mermaid_code, language="mermaid")
+                                    st.caption(f"Erreur brute : {e}")
+                        
+                        elif selected_mode == "📝 Fiches de Révision":
+                            st.markdown("### 📝 Flashcards")
+                            try:
+                                flashcards = json.loads(final_content_clean)
+                                cols = st.columns(2)
+                                for i, card in enumerate(flashcards):
+                                    with cols[i % 2]:
+                                        with st.expander(f"❓ {card.get('question', 'Q')}", expanded=False):
+                                            st.info(f"💡 {card.get('reponse', 'R')}")
+                            except:
+                                st.warning("Erreur de formatage JSON.")
+                                st.write(final_content)
+
+                        elif selected_mode == "📊 Diapositives (PPTX)":
+                            st.markdown("### 📊 PowerPoint")
+                            try:
+                                slides_data = json.loads(final_content_clean)
+                                pptx_file = generate_pptx_from_json(slides_data)
+                                with open(pptx_file, "rb") as f:
+                                    st.download_button("⬇️ Télécharger .pptx", f, "cours.pptx")
+                                # Aperçu
+                                for slide in slides_data:
+                                    st.markdown(f"**📺 {slide.get('titre', 'Slide')}**")
+                                    for p in slide.get('points', []):
+                                        st.markdown(f"- {p}")
+                            except:
+                                st.warning("Erreur format PPTX.")
+                                st.write(final_content)
+
+                        # Historique (Texte simplifié)
+                        st.session_state.messages.append({"role": "assistant", "content": f"[{selected_mode}] Résultat généré ci-dessus."})
+
                 except Exception as e:
-                    st.error(f"Une erreur est survenue : {e}")
-        else:
-            st.warning("Je n'ai aucun document pour répondre à cette demande.")
+                    st.error(f"Erreur technique : {e}")
