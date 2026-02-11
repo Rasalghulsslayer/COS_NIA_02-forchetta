@@ -503,7 +503,7 @@ with st.sidebar:
                         st.success("Profil créé ! Connectez-vous.")
                     else:
                         st.error(msg)
-                        
+
 # --- ZONE PRINCIPALE ---
 if not st.session_state["user_session"]: st.stop()
 
@@ -582,7 +582,7 @@ if prompt := st.chat_input("Posez votre question (ex: 'Donne moi l'article de Pa
                     rag_chain = initialize_rag_chain_dynamic(
                         relevant_files, 
                         st.session_state["user_session"],
-                        custom_prompt=custom_instruction # <-- C'est ici que la magie opère
+                        custom_prompt=custom_instruction 
                     )
                     
                     if rag_chain:
@@ -590,12 +590,12 @@ if prompt := st.chat_input("Posez votre question (ex: 'Donne moi l'article de Pa
                         response = rag_chain.invoke({"input": prompt})
                         raw_answer = response["answer"]
 
-                        # Nettoyage DeepSeek (<think>)
+                        # Nettoyage DeepSeek 
                         final_content = raw_answer
                         if "</think>" in raw_answer:
                             final_content = raw_answer.split("</think>")[-1].strip()
                         
-                        # Nettoyage Markdown (le LLM met souvent ```json ... ```)
+                        # Nettoyage Markdown 
                         final_content_clean = final_content.replace("```json", "").replace("```mermaid", "").replace("```", "").strip()
 
                         # 4. AFFICHAGE SELON LE MODE
