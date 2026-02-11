@@ -4,10 +4,12 @@
         "password_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
     },
     "profil": {
-        "niveau": "Intermédiaire",
+        "niveau": "Expert",
         "preferences_apprentissage": {
-            "ton": "Fun & Détendu",
+            "ton": "Neutre",
             "contenu_prefere": "mixte"
-        }
+        },
+        "role": "Ing\u00e9nieur",
+        "objectif": "Faire de l'ing\u00e9nieurie"
     }
 }

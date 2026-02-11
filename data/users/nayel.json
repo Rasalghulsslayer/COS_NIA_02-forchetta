@@ -4,9 +4,11 @@
         "password_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
     },
     "profil": {
-        "niveau": "B",
+        "niveau": "Interm\u00e9diaire",
         "preferences_apprentissage": {
             "ton": "Strict"
-        }
+        },
+        "role": "Touriste",
+        "objectif": "Etre le meilleur"
     }
 }

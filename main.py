@@ -84,18 +84,52 @@ def get_user_filepath(username):
     safe_name = re.sub(r'[^a-z0-9]', '', username.lower())
     return os.path.join(users_folder, f"{safe_name}.json")
 
-def create_user(username, password, level, tone):
+# --- DANS LA SECTION 1. FONCTIONS AUTHENTIFICATION ---
+
+def create_user(username, password, level, tone, role, goal):
     filepath = get_user_filepath(username)
     if os.path.exists(filepath): return False, "Utilisateur existant."
+    
     data = {
         "auth": {"username_display": username, "password_hash": hash_password(password)},
-        "profil": {"niveau": level, "preferences_apprentissage": {"ton": tone}}
+        "profil": {
+            "niveau": level,
+            "role": role,           # NOUVEAU
+            "objectif": goal,       # NOUVEAU
+            "preferences_apprentissage": {"ton": tone}
+        }
     }
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4)
         return True, "Succès"
     except: return False, "Erreur écriture"
+
+def update_user_profile(username, new_level, new_tone, new_role, new_goal):
+    """Met à jour le profil complet."""
+    filepath = get_user_filepath(username)
+    if not os.path.exists(filepath):
+        return None
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        # Modification des champs
+        data["profil"]["niveau"] = new_level
+        data["profil"]["preferences_apprentissage"]["ton"] = new_tone
+        
+        # Ajout/Modif des nouveaux champs
+        data["profil"]["role"] = new_role
+        data["profil"]["objectif"] = new_goal
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+            
+        return data
+    except Exception as e:
+        print(f"Erreur update: {e}")
+        return None
 
 def verify_credentials(username, password):
     filepath = get_user_filepath(username)
@@ -152,7 +186,7 @@ def smart_file_router(user_prompt, folder_path):
         return None
 
     # 2. Préparer le LLM (On utilise le même modèle)
-    llm = Ollama(model="mistral", temperature=0) # Température 0 pour être logique et strict
+    llm = Ollama(model="deepseek-r1:8b", temperature=0) # Température 0 pour être logique et strict
     
     # 3. Le Prompt du "Bibliothécaire"
     router_prompt = (
@@ -284,13 +318,16 @@ PROMPT_MODES = {
 # --- 3. INITIALISATION RAG (Corrigée pour accepter les modes) ---
 def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
     
-    # 1. Chargement des données utilisateur habituelles
+    # 1. Chargement des données 
     profil = user_data.get("profil", {})
     user_name = user_data.get("auth", {}).get("username_display", "Étudiant")
+    
     user_level = profil.get("niveau", "Intermédiaire")
+    user_role = profil.get("role", "Cadet Spatial")       
+    user_goal = profil.get("objectif", "Apprentissage")  
     ai_tone = profil.get("preferences_apprentissage", {}).get("ton", "neutre")
 
-    # 2. Chargement des PDF (inchangé)
+    # 2. Chargement des PDF
     all_pages = []
     for pdf_path in selected_files:
         try:
@@ -306,20 +343,22 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    llm = Ollama(model="mistral")
+    llm = Ollama(model="deepseek-r1:8b", temperature=0)
     
-    # 4. GESTION DU PROMPT (C'est ici que ça change)
+    # 4. GESTION DU PROMPT MODIFIÉE
     if custom_prompt:
-        # CAS A : On a un mode spécial (Podcast, JSON, PPTX...)
-        # On ignore le profil utilisateur pour se concentrer sur le format technique
+        # Mode spécial (reste inchangé)
         system_prompt = f"{custom_prompt}\n\nContexte:\n{{context}}"
     else:
-        # CAS B : Chat standard (On utilise le profil utilisateur)
+        # CAS B : Chat standard enrichi
         system_prompt = (
-            f"Tu es un tuteur pour {user_name}. Niveau : {user_level}. "
-            f"Ton style : {ai_tone}. "
-            "Utilise le contexte pour répondre."
-            "\n\n{context}"
+            f"Tu es un assistant expert pour le Spaceflight Institute. "
+            f"Ton interlocuteur est : {user_name}, qui a le grade de {user_role}. "
+            f"Son niveau de connaissances est : {user_level}. "
+            f"Son objectif actuel est : {user_goal}. "
+            f"Ton style de réponse doit être : {ai_tone}. "
+            "Utilise le contexte fourni pour répondre avec précision."
+            "\n\nContexte:\n{context}"
         )
     
     prompt_template = ChatPromptTemplate.from_messages([
@@ -334,42 +373,130 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
 # --- GESTION SESSION ---
 if "user_session" not in st.session_state: st.session_state["user_session"] = None
 
-# --- SIDEBAR (LOGIN) ---
+# --- SIDEBAR (LOGIN & PROFIL) ---
 with st.sidebar:
     st.header("🔒 Authentification")
+    
+    # CAS 1 : UTILISATEUR CONNECTÉ
     if st.session_state["user_session"]:
-        st.success(f"Connecté : **{st.session_state['user_session']['auth']['username_display']}**")
+        user_info = st.session_state["user_session"]
+        username = user_info['auth']['username_display']
+        
+        # Récupération du rôle pour l'affichage (ex: Astronaute Nayel)
+        display_role = user_info["profil"].get("role", "Astronaute")
+        st.success(f"{display_role} : **{username}**")
+        
+        # --- BLOC UNIQUE : MODIFIER MON PROFIL ---
+        with st.expander("👤 Dossier Personnel"):
+            st.caption("Mettez à jour vos accréditations.")
+            
+            # --- 1. RECUPERATION DONNEES ACTUELLES (Avec Fallback) ---
+            raw_level = user_info["profil"].get("niveau", "Intermédiaire")
+            raw_tone = user_info["profil"].get("preferences_apprentissage", {}).get("ton", "Neutre")
+            raw_role = user_info["profil"].get("role", "Cadet")
+            raw_goal = user_info["profil"].get("objectif", "")
+
+            # --- 2. LISTES D'OPTIONS ---
+            list_niveaux = ["Débutant", "Intermédiaire", "Avancé", "Expert"]
+            list_styles = ["Cool", "Strict", "Neutre", "Scientifique", "Militaire"]
+            list_roles = ["Cadet", "Pilote", "Ingénieur", "Scientifique", "Commandant", "Touriste"]
+
+            # --- 3. LOGIQUE DE SECURITE (Pour anciens profils) ---
+            # Niveau
+            if raw_level not in list_niveaux:
+                mapping_niveau = {"A": "Débutant", "B": "Intermédiaire", "C": "Avancé"}
+                default_level = mapping_niveau.get(raw_level, "Intermédiaire")
+            else:
+                default_level = raw_level
+            
+            # Style
+            default_tone = raw_tone if raw_tone in list_styles else "Neutre"
+            
+            # Rôle
+            default_role = raw_role if raw_role in list_roles else "Cadet"
+
+            # --- 4. FORMULAIRE ---
+            with st.form("update_profile_full"):
+                st.markdown("**Identité**")
+                new_role = st.selectbox("Spécialité", list_roles, index=list_roles.index(default_role))
+                new_goal = st.text_input("Objectif de Mission", value=raw_goal, placeholder="Ex: Certification Moteur Raptor")
+                
+                st.markdown("**Préférences IA**")
+                new_level = st.select_slider("Niveau d'expertise", options=list_niveaux, value=default_level)
+                new_tone = st.selectbox("Ton de l'IA", list_styles, index=list_styles.index(default_tone))
+                
+                if st.form_submit_button("💾 Mettre à jour le dossier"):
+                    updated_data = update_user_profile(username, new_level, new_tone, new_role, new_goal)
+                    if updated_data:
+                        st.session_state["user_session"] = updated_data
+                        st.toast("Dossier mis à jour !", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Erreur mise à jour.")
+
         st.divider()
+        
+        # --- SÉLECTION DU MODE ---
         st.header("⚙️ Mode de Sortie")
         selected_mode = st.radio(
             "Format de la réponse :",
-            list(PROMPT_MODES.keys())
+            list(PROMPT_MODES.keys()),
+            key="mode_radio_main" 
         )
-        if st.button("Se déconnecter"):
+        
+        st.divider()
+        
+        if st.button("Se déconnecter", key="logout_btn_main"):
             st.session_state["user_session"] = None
             st.rerun()
+            
         st.divider()
-        uploaded = st.file_uploader("Ajouter PDF", type="pdf")
+        
+        uploaded = st.file_uploader("Ajouter PDF", type="pdf", key="pdf_uploader_main")
         if uploaded:
-            with open(os.path.join(cours_folder, uploaded.name), "wb") as f: f.write(uploaded.getbuffer())
-            st.success("Ajouté !")
-    else:
-        t1, t2 = st.tabs(["Log", "Sign"])
-        with t1:
-            with st.form("l"):
-                u, p = st.text_input("User"), st.text_input("Pass", type="password")
-                if st.form_submit_button("Go"):
-                    d, m = verify_credentials(u, p)
-                    if d: st.session_state["user_session"] = d; st.rerun()
-                    else: st.error(m)
-        with t2:
-            with st.form("s"):
-                u, p = st.text_input("New User"), st.text_input("New Pass", type="password")
-                l, t = st.select_slider("Niveau", ["A", "B", "C"]), st.selectbox("Style", ["Cool", "Strict"])
-                if st.form_submit_button("Créer"):
-                    create_user(u, p, l, t)
-                    st.success("Crée !")
+            save_path = os.path.join(cours_folder, uploaded.name)
+            with open(save_path, "wb") as f: 
+                f.write(uploaded.getbuffer())
+            st.success("Document archivé !")
 
+    # CAS 2 : UTILISATEUR NON CONNECTÉ
+    else:
+        t1, t2 = st.tabs(["Connexion", "Inscription"])
+        
+        with t1:
+            with st.form("login_form"):
+                u = st.text_input("Matricule (User)")
+                p = st.text_input("Code d'accès (Pass)", type="password")
+                if st.form_submit_button("S'identifier"):
+                    d, m = verify_credentials(u, p)
+                    if d: 
+                        st.session_state["user_session"] = d
+                        st.rerun()
+                    else: 
+                        st.error(m)
+        
+        with t2:
+            st.markdown("Rejoindre le **Spaceflight Institute**")
+            with st.form("signup_form"):
+                u = st.text_input("Nouveau Matricule")
+                p = st.text_input("Créer Code d'accès", type="password")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    role_signup = st.selectbox("Spécialité", ["Cadet", "Pilote", "Ingénieur", "Scientifique", "Commandant", "Touriste"])
+                with c2:
+                    level_signup = st.selectbox("Niveau", ["Débutant", "Intermédiaire", "Avancé", "Expert"])
+                
+                goal_signup = st.text_input("Objectif Principal", placeholder="Ex: Apprendre la physique orbitale")
+                tone_signup = st.selectbox("Style de l'assistant", ["Cool", "Strict", "Neutre", "Scientifique", "Militaire"])
+                
+                if st.form_submit_button("Initialiser le profil"):
+                    created, msg = create_user(u, p, level_signup, tone_signup, role_signup, goal_signup)
+                    if created:
+                        st.success("Profil créé ! Connectez-vous.")
+                    else:
+                        st.error(msg)
+                        
 # --- ZONE PRINCIPALE ---
 if not st.session_state["user_session"]: st.stop()
 
