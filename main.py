@@ -584,7 +584,7 @@ with st.sidebar:
                         st.success("Profil créé ! Connectez-vous.")
                     else:
                         st.error(msg)
-                        
+
 # --- ZONE PRINCIPALE ---
 if not st.session_state["user_session"]: st.stop()
 
@@ -650,7 +650,7 @@ if prompt := st.chat_input("Posez votre question..."):
                     rag_chain = initialize_rag_chain_dynamic(
                         relevant_files, 
                         st.session_state["user_session"],
-                        custom_prompt=custom_instruction
+                        custom_prompt=custom_instruction 
                     )
                     
                     if rag_chain:
@@ -658,11 +658,12 @@ if prompt := st.chat_input("Posez votre question..."):
                         response = rag_chain.invoke({"input": real_prompt})
                         raw_answer = response["answer"]
 
-                        # Nettoyage
+                        # Nettoyage DeepSeek 
                         final_content = raw_answer
                         if "</think>" in raw_answer:
                             final_content = raw_answer.split("</think>")[-1].strip()
                         
+                        # Nettoyage Markdown 
                         final_content_clean = final_content.replace("```json", "").replace("```mermaid", "").replace("```", "").strip()
 
                         # Affichage selon mode
