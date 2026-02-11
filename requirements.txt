@@ -7,3 +7,6 @@ langchain-core
 pypdf
 chromadb
 sentence-transformers
+gTTS
+python-pptx
+streamlit-mermaid
