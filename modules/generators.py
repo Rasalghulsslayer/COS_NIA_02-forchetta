@@ -3,10 +3,40 @@ from gtts import gTTS
 from pptx import Presentation
 
 def clean_mermaid_code(text):
+    """
+    Nettoie le code Mermaid pour éviter les erreurs de syntaxe 10.2.4.
+    """
+    # 1. Supprimer la réflexion de DeepSeek (<think>...</think>)
+    if "</think>" in text:
+        text = text.split("</think>")[-1]
+
+    # 2. Chercher le bloc de code Mermaid avec une Regex (plus précis)
     pattern = r"```mermaid\s*(.*?)\s*```"
     match = re.search(pattern, text, re.DOTALL)
-    if match: return match.group(1).strip()
-    return text.replace("```mermaid", "").replace("```", "").strip()
+    
+    if match:
+        code = match.group(1).strip()
+    else:
+        # Si pas de balises, on essaie de nettoyer le texte brut
+        code = text.replace("```mermaid", "").replace("```", "").strip()
+
+    # 3. Validation et Correction de secours
+    lines = code.split('\n')
+    clean_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        # On ne garde que les lignes qui ressemblent à du code Mermaid ou des commentaires
+        if line and (line.startswith("graph") or "-->" in line or line.startswith("subgraph") or line.startswith("end")):
+            clean_lines.append(line)
+            
+    final_code = "\n".join(clean_lines)
+
+    # Si l'IA a oublié de déclarer le type de graphique, on le force
+    if not final_code.startswith("graph"):
+        final_code = "graph TD\n" + final_code
+        
+    return final_code
 
 def generate_audio(text, lang='fr'):
     try:

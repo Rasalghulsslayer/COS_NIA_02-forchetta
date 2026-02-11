@@ -70,28 +70,42 @@ for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
 if prompt := st.chat_input("Votre question..."):
+    # 1. Affichage User
     with st.chat_message("user"): st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        # 1. Smart Router
-        file_path = files.smart_file_router(prompt, utils.COURS_FOLDER)
+        # 2. Contextualisation (NOUVEAU)
+        real_prompt = prompt
+        if len(st.session_state.messages) > 1:
+            with st.status("🧠 Analyse du contexte...", expanded=False) as status:
+                history = st.session_state.messages[:-1]
+                new_prompt = rag.contextualize_question(prompt, history)
+                if new_prompt != prompt:
+                    real_prompt = new_prompt
+                    status.write(f"Question reformulée : {real_prompt}")
+                    status.update(label="Contexte compris !", state="complete")
+                else:
+                    status.update(label="Pas de contexte nécessaire.", state="complete")
+
+        # 3. Smart Router (Sur prompt original ou reformulé, au choix)
+        file_path = files.smart_file_router(real_prompt, utils.COURS_FOLDER)
         if file_path:
             fname = os.path.basename(file_path)
             st.success(f"Document trouvé : {fname}")
             with open(file_path, "rb") as f:
                 st.download_button("Télécharger", f, file_name=fname)
-            prompt += f" (Note: Fichier {fname} proposé.)"
+            real_prompt += f" (Note: Fichier {fname} proposé.)"
 
-        # 2. RAG
-        rel_files, _ = files.get_relevant_files(prompt, utils.COURS_FOLDER)
+        # 4. RAG (Sur le prompt reformulé)
+        rel_files, _ = files.get_relevant_files(real_prompt, utils.COURS_FOLDER)
         if rel_files:
             with st.spinner("Analyse..."):
                 custom_instr = rag.PROMPT_MODES[selected_mode] if selected_mode != "Chat Standard" else None
                 chain = rag.initialize_rag_chain_dynamic(rel_files, st.session_state["user_session"], custom_instr)
                 
                 if chain:
-                    res = chain.invoke({"input": prompt})
+                    res = chain.invoke({"input": real_prompt})
                     raw = res["answer"]
                     
                     # Nettoyage
@@ -102,7 +116,11 @@ if prompt := st.chat_input("Votre question..."):
                         st.markdown(clean_txt)
                     elif selected_mode == "🧠 Carte Mentale":
                         code = generators.clean_mermaid_code(clean_txt)
-                        st_mermaid.st_mermaid(code, height="500px")
-                    # ... autres modes via generators ...
+                        try:
+                            st_mermaid.st_mermaid(code, height="500px")
+                        except:
+                            st.error("Erreur d'affichage du graphique.")
+                            with st.expander("Voir le code"): st.code(code)
+                    # ... autres modes ...
                     
                     st.session_state.messages.append({"role": "assistant", "content": clean_txt})

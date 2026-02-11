@@ -9,11 +9,82 @@ from langchain_core.prompts import ChatPromptTemplate
 
 PROMPT_MODES = {
     "Chat Standard": "Réponds de manière naturelle.",
-    "🎙️ Résumé Audio (Podcast)": "Script podcast dynamique sans ponctuation lue.",
-    "🧠 Carte Mentale": "Bloc code Mermaid graph TD uniquement.",
-    "📝 Fiches de Révision": "JSON strict liste objets question/reponse.",
-    "📊 Diapositives (PPTX)": "JSON strict liste diapositives titre/points."
+    
+    "🎙️ Résumé Audio (Podcast)": (
+        "Adopte le persona d'un animateur de podcast dynamique. "
+        "Ton but est de créer un script oral engageant. "
+        "Ne mets pas de balises de mise en scène (musique, applaudissements), juste le texte parlé."
+        "Ne lis SURTOUT PAS la ponctuation."
+    ),
+    
+    "🧠 Carte Mentale": (
+        "Tu es un expert en visualisation de données. "
+        "Ta mission : Créer une carte mentale hiérarchique avec Mermaid.js. "
+        "RÈGLES DE SYNTAXE STRICTES :\n"
+        "1. Utilise UNIQUEMENT la syntaxe 'graph TD' (et non 'mindmap').\n"
+        "2. IMPORTANT : Mets TOUS les textes des nœuds entre guillemets doubles. Ex: id[\"Mon Texte Ici\"]\n"
+        "3. Ne mets JAMAIS de parenthèses () directement dans le texte sans guillemets.\n"
+        "4. Réponds UNIQUEMENT avec le bloc de code ```mermaid ... ```.\n\n"
+        "Exemple valide :\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "  A[\"Sujet Principal\"] --> B[\"Idée 1 (Détail)\"]\n"
+        "  A --> C[\"Idée 2 : L'exemple\"]\n"
+        "```"
+    ),
+    
+    "📝 Fiches de Révision": (
+        "Ton but est de créer un outil de mémorisation. "
+        "Tu DOIS répondre UNIQUEMENT au format JSON strict (liste d'objets). "
+        "Format attendu : [{{'question': '...', 'reponse': '...'}}, {{'question': '...', 'reponse': '...'}}]"
+    ),
+    
+    "📊 Diapositives (PPTX)": (
+        "Ton but est de synthétiser pour une présentation. "
+        "Tu DOIS répondre UNIQUEMENT au format JSON strict. "
+        "Format attendu : [{{'titre': '...', 'points': ['...', '...']}}, ...]"
+    )
 }
+
+def contextualize_question(input_question, chat_history):
+    """
+    Reformule la question utilisateur en intégrant le contexte de l'historique.
+    """
+    if not chat_history:
+        return input_question
+    
+    last_exchanges = chat_history[-3:] 
+    history_str = ""
+    for msg in last_exchanges:
+        role = "Utilisateur" if msg["role"] == "user" else "Assistant"
+        content = msg["content"]
+        if len(content) > 200: 
+            content = content[:200] + "..."
+        history_str += f"{role}: {content}\n"
+    
+    llm = Ollama(model="deepseek-r1:8b", temperature=0.1)
+    
+    reformulation_prompt = (
+        "Tu es un expert en linguistique. Ta tâche est de réécrire la dernière question de l'utilisateur "
+        "pour qu'elle soit autonome et compréhensible sans l'historique de la conversation.\n\n"
+        "--- HISTORIQUE ---\n"
+        f"{history_str}\n"
+        "------------------\n"
+        f"Dernière question de l'Utilisateur : '{input_question}'\n\n"
+        "CONSIGNES :\n"
+        "1. Remplace les pronoms (il, elle, ça, le...) par les noms précis présents dans l'historique.\n"
+        "2. Si la question est déjà claire, ne change rien.\n"
+        "3. Réponds UNIQUEMENT par la question reformulée. Pas de politesse, pas de balises.\n"
+    )
+    
+    try:
+        response = llm.invoke(reformulation_prompt)
+        if "</think>" in response:
+            response = response.split("</think>")[-1]
+        return response.replace('"', '').strip()
+    except Exception as e:
+        print(f"Erreur reformulation : {e}")
+        return input_question
 
 def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
     profil = user_data.get("profil", {})
