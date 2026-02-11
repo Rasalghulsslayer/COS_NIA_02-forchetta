@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
-st.title("🤖 Spaceflight I(A)nstitute - Recherche Intelligente")
+st.title("🤖 Spaceflight Institute - Recherche Intelligente")
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
@@ -110,7 +110,7 @@ def smart_file_router(user_prompt, folder_path):
         return None
 
     # 2. Préparer le LLM (On utilise le même modèle)
-    llm = Ollama(model="deepseek-r1:8b", temperature=0) # Température 0 pour être logique et strict
+    llm = Ollama(model="mistral", temperature=0) # Température 0 pour être logique et strict
     
     # 3. Le Prompt du "Bibliothécaire"
     router_prompt = (
@@ -175,7 +175,7 @@ def initialize_rag_chain_dynamic(selected_files, user_data):
     
     # On demande 4 morceaux de contexte
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    llm = Ollama(model="deepseek-r1:8b")
+    llm = Ollama(model="mistral")
     
     system_prompt = (
         f"Tu es un tuteur pour {user_name}. Niveau : {profil.get('niveau')}. "
