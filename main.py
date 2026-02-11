@@ -63,7 +63,7 @@ def clean_mermaid_code(text):
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
-st.title("🤖 Spaceflight I(A)nstitute - Recherche Intelligente")
+st.title("🤖 Spaceflight Institute - Recherche Intelligente")
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
@@ -152,7 +152,7 @@ def smart_file_router(user_prompt, folder_path):
         return None
 
     # 2. Préparer le LLM (On utilise le même modèle)
-    llm = Ollama(model="deepseek-r1:8b", temperature=0) # Température 0 pour être logique et strict
+    llm = Ollama(model="mistral", temperature=0) # Température 0 pour être logique et strict
     
     # 3. Le Prompt du "Bibliothécaire"
     router_prompt = (
@@ -306,7 +306,7 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    llm = Ollama(model="deepseek-r1:8b")
+    llm = Ollama(model="mistral")
     
     # 4. GESTION DU PROMPT (C'est ici que ça change)
     if custom_prompt:
