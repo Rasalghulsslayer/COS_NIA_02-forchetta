@@ -37,24 +37,32 @@ def clean_mermaid_code(text):
         
     return final_code
 
+import os
+import re  # Import indispensable pour le nettoyage
+from gtts import gTTS
+import streamlit as st
+
 def generate_audio(text, lang='fr'):
-    """Génère un fichier audio et affiche une notification."""
+    """Génère un fichier audio en nettoyant les caractères Markdown."""
     try:
-        # 1. On définit le nom du dossier de destination
-        output_folder = "generated"
+        # 1. Nettoyage du texte : on retire les astérisques et autres symboles Markdown
+        # On remplace les * par rien du tout
+        clean_text = re.sub(r'\*', '', text)
+        # Optionnel : on peut aussi retirer les underscores _ ou les # des titres
+        clean_text = re.sub(r'#+', '', clean_text)
         
-        # 2. On vérifie si le dossier existe, sinon on le crée
+        # 2. Configuration du dossier
+        output_folder = "generated"
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
             
-        # 3. On construit le chemin complet (ex: generated/generated.mp3)
         filename = os.path.join(output_folder, "generated.mp3")
         
-        # 4. Génération et sauvegarde
-        tts = gTTS(text=text, lang=lang, slow=False)
+        # 3. Génération avec le texte NETTOYÉ
+        tts = gTTS(text=clean_text, lang=lang, slow=False)
         tts.save(filename)
-        st.toast("Fichier audio généré avec succès !", icon="🔊")
         
+        st.toast("Fichier audio généré avec succès !", icon="🔊")
         return filename
         
     except Exception as e:
