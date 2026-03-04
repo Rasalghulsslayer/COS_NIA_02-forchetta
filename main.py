@@ -5,7 +5,7 @@ import streamlit_mermaid as st_mermaid
 
 # Importations de NOS modules
 import utils
-from modules import auth, files, rag, generators
+from modules import auth, files, rag, generators, schedule
 
 # 1. Configuration Initiale
 utils.init_folders()
@@ -186,17 +186,58 @@ if prompt := st.chat_input("Votre question..."):
                     
                     # Nettoyage
                     clean_txt = raw.split("</think>")[-1].strip() if "</think>" in raw else raw
+                    # Nettoyage DeepSeek 
+                    final_content = raw
+                    if "<tool_call>" in raw:
+                        final_content = raw.split("<tool_call>")[-1].strip()
                     
+                    # Nettoyage Markdown 
+                    final_content_clean = final_content.replace("```json", "").replace("```mermaid", "").replace("```", "").strip()
                     # Affichage selon mode
                     if selected_mode == "Chat Standard":
-                        st.markdown(clean_txt)
-                    elif selected_mode == "🧠 Carte Mentale":
-                        code = generators.clean_mermaid_code(clean_txt)
-                        try:
-                            st_mermaid.st_mermaid(code, height="500px")
-                        except:
-                            st.error("Erreur d'affichage du graphique.")
-                            with st.expander("Voir le code"): st.code(code)
-                    # ... autres modes ...
+                        st.markdown(final_content)
                     
-                    st.session_state.messages.append({"role": "assistant", "content": clean_txt})
+                    elif selected_mode == "🎙️ Résumé Audio (Podcast)":
+                        st.markdown("### 🎙️ Podcast")
+                        with st.expander("Script"): st.write(final_content)
+                        audio_file = generators.generate_audio(final_content)
+                        if audio_file: st.audio(audio_file)
+                    
+                    elif selected_mode == "🧠 Carte Mentale":
+                        st.markdown("### 🧠 Carte Mentale")
+                        mermaid_code = generators.clean_mermaid_code(final_content)
+                        try:
+                            st_mermaid.st_mermaid(mermaid_code, height="500px")
+                        except:
+                            st.code(mermaid_code)
+                    
+                    elif selected_mode == "📝 Fiches de Révision":
+                        st.markdown("### 📝 Flashcards")
+                        try:
+                            flashcards = json.loads(final_content_clean)
+                            cols = st.columns(2)
+                            for i, card in enumerate(flashcards):
+                                with cols[i % 2]:
+                                    with st.expander(f"❓ {card.get('question', 'Q')}", expanded=False):
+                                        st.info(f"💡 {card.get('reponse', 'R')}")
+                        except:
+                            st.warning("Erreur JSON.")
+                            st.write(final_content)
+
+                    elif selected_mode == "📊 Diapositives (PPTX)":
+                        st.markdown("### 📊 PowerPoint")
+                        try:
+                            slides_data = json.loads(final_content_clean)
+                            pptx_file = generators.generate_pptx_from_json(slides_data)
+                            with open(pptx_file, "rb") as f:
+                                st.download_button("⬇️ Télécharger .pptx", f, "cours.pptx")
+                            for slide in slides_data:
+                                st.markdown(f"**📺 {slide.get('titre', 'Slide')}**")
+                                for p in slide.get('points', []):
+                                    st.markdown(f"- {p}")
+                        except:
+                            st.warning("Erreur PPTX.")
+                            st.write(final_content)
+
+                    # Sauvegarde historique (Réponse nette)
+                    st.session_state.messages.append({"role": "assistant", "content": final_content})

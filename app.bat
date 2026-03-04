@@ -1,17 +1,15 @@
 @echo off
-title Lancement de Spaceflight Institute 🚀
+set DISTRO=Ubuntu
 
-echo ==========================================
-echo      DEMARRAGE DU SYSTEME IA (WSL)
-echo ==========================================
+echo Lancement du serveur RAG et d'Ollama...
 
-:: Etape 1 : On prépare l'ouverture du navigateur dans 8 secondes
-:: (Le temps que Streamlit démarre).
-:: Le ">nul" sert à cacher le compte à rebours pour que ce soit propre.
-start "" /B cmd /c "timeout /nobreak /t 8 >nul & start http://localhost:8501"
+:: Lance Ollama et Streamlit dans WSL en arrière-plan
+wsl -d %DISTRO% bash -c "ollama serve > /dev/null 2>&1 & streamlit run main.py --server.address 0.0.0.0" &
 
-:: Etape 2 : On lance WSL et Streamlit
-:: Note : J'ai ajouté --server.address 0.0.0.0 pour forcer l'accessibilité
-wsl -e bash -c "source ~/miniconda3/etc/profile.d/conda.sh; conda activate pie; if ! pgrep -x 'ollama' > /dev/null; then echo 'Démarrage Ollama...'; ollama serve > /dev/null 2>&1 & sleep 5; fi; cd ~/Sup/COS_NIA_02/; echo 'Lancement Streamlit...'; streamlit run main.py --server.port 8501 --server.address 0.0.0.0"
+:: Attend 5 secondes que le serveur démarre
+timeout /t 5
+
+:: Ouvre le navigateur sur Windows
+start http://localhost:8501
 
 pause
