@@ -10,14 +10,14 @@ from langchain_core.prompts import ChatPromptTemplate
 PROMPT_MODES = {
     "Chat Standard": "Réponds de manière naturelle.",
     
-    "🎙️ Résumé Audio (Podcast)": (
+    "🎙️ Audio (Podcast)": (
         "Adopte le persona d'un animateur de podcast dynamique. "
         "Ton but est de créer un script oral engageant. "
         "Ne mets pas de balises de mise en scène (musique, applaudissements), juste le texte parlé."
         "Ne lis SURTOUT PAS la ponctuation."
     ),
     
-    "🧠 Carte Mentale": (
+    "🧠 Visual card": (
         "Tu es un expert en visualisation de données. "
         "Ta mission : Créer une carte mentale hiérarchique avec Mermaid.js. "
         "RÈGLES DE SYNTAXE STRICTES :\n"
@@ -33,13 +33,13 @@ PROMPT_MODES = {
         "```"
     ),
     
-    "📝 Fiches de Révision": (
+    "📝 Flash card": (
         "Ton but est de créer un outil de mémorisation. "
         "Tu DOIS répondre UNIQUEMENT au format JSON strict (liste d'objets). "
         "Format attendu : [{{'question': '...', 'reponse': '...'}}, {{'question': '...', 'reponse': '...'}}]"
     ),
     
-    "📊 Diapositives (PPTX)": (
+    "📊 Slides (PPTX)": (
         "Ton but est de synthétiser pour une présentation. "
         "Tu DOIS répondre UNIQUEMENT au format JSON strict. "
         "Format attendu : [{{'titre': '...', 'points': ['...', '...']}}, ...]"
@@ -83,7 +83,7 @@ def contextualize_question(input_question, chat_history):
             response = response.split("</think>")[-1]
         return response.replace('"', '').strip()
     except Exception as e:
-        print(f"Erreur reformulation : {e}")
+        print(f"Reformulation Error: {e}")
         return input_question
 
 def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
@@ -101,7 +101,8 @@ def initialize_rag_chain_dynamic(selected_files, user_data, custom_prompt=None):
         try:
             loader = PyPDFLoader(pdf_path)
             all_pages.extend(loader.load())
-        except: pass
+        except Exception as e:
+            print(f"Error loading PDF {pdf_path}: {e}")
 
     if not all_pages: return None
 
