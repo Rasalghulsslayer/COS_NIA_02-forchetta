@@ -10,3 +10,11 @@ sentence-transformers
 gTTS
 python-pptx
 streamlit-mermaid
+streamlit-calendar
+fpdf
+os
+json
+glob
+datetime
+random
+itertools

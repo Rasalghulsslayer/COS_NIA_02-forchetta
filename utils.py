@@ -14,5 +14,5 @@ def init_folders():
 # Configuration de la page (à appeler au début du main)
 def setup_page(st):
     st.set_page_config(page_title="Spaceflight Institute", page_icon="🚀", layout="wide")
-    st.title("🤖 Spaceflight Institute - Recherche Intelligente")
+    st.title("🤖 Spaceflight Institute")
     os.environ["NO_PROXY"] = "localhost,127.0.0.1"

@@ -3,6 +3,7 @@ import json
 import hashlib
 import re
 from utils import USERS_FOLDER
+import utils
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -58,3 +59,11 @@ def verify_credentials(username, password):
         if data["auth"]["password_hash"] == hash_password(password): return data, "Succès"
         return None, "Mot de passe faux"
     except: return None, "Erreur fichier"
+
+def load_user_preferences(username_file):
+    filepath = os.path.join(utils.USERS_FOLDER, f"{username_file}.json")
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return None
