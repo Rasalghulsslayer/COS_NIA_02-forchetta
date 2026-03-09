@@ -1,0 +1,14 @@
+{
+    "auth": {
+        "username_display": "killian",
+        "password_hash": "31e02d151dd9a0231c0a93695ea7da1ea6e4b83542e4a88efbf7d08a7eac9dbf"
+    },
+    "profil": {
+        "niveau": "Expert",
+        "role": "Scientifique",
+        "objectif": "",
+        "preferences_apprentissage": {
+            "ton": "Cool"
+        }
+    }
+}
