@@ -76,7 +76,7 @@ with st.sidebar:
                 new_goal = st.text_input("Mission Objective", value=raw_goal, placeholder="Ex: Assistant")
                 
                 st.markdown("**AI Preferences**")
-                new_level = st.select_slider("Expertise Level", options=list_niveaux, value=default_level)
+                new_level = st.select_slider("Expertise Level", options=list_niveaux, value=default_level, key="level_slider_main")
                 new_tone = st.selectbox("AI Tone", list_styles, index=list_styles.index(default_tone))
                 
                 if st.form_submit_button("💾 Update Profile"):
