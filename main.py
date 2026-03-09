@@ -115,7 +115,7 @@ with st.sidebar:
 
     # cas 2 : pas de session, afficher formulaire de connexion / inscription
     else:
-        t1, t2 = st.tabs(["Connexion", "Inscription"])
+        t1, t2 = st.tabs(["Log in", "Sign Up"])
         
         with t1:
             with st.form("login_form"):
