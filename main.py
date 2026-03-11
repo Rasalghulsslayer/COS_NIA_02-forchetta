@@ -5,6 +5,10 @@ import os
 import json
 import streamlit_mermaid as st_mermaid
 from streamlit_calendar import calendar
+import signal
+import subprocess
+import time
+import sys
 
 # Nos modules
 import utils
@@ -150,7 +154,60 @@ with st.sidebar:
                         st.success("Profile created! Please log in.")
                     else:
                         st.error(msg)
-# --- FIN SIDEBAR ---
+    
+    st.divider()
+    if st.button("🛑 Arrêter le système"):
+        st.warning("Arrêt forcé et fermeture des fenêtres...")
+        
+        # Script AppleScript avec mise au premier plan (activate)
+        applescript = """
+        ignoring application responses
+            
+            -- 1. FERMER CHROME
+            tell application "Google Chrome"
+                try
+                    close (every tab of every window whose URL contains ":8501")
+                end try
+            end tell
+            
+            -- 2. GESTION OLLAMA
+            try
+                do shell script "pkill -9 -f ollama"
+            end try
+            
+            delay 0.2
+            
+            -- On met le Terminal au premier plan pour voir la fenêtre se fermer
+            tell application "Terminal"
+                activate  -- <--- C'EST CETTE COMMANDE QUI FAIT LA MAGIE
+                try
+                    close (every window whose name contains "ollama")
+                end try
+            end tell
+
+            -- 3. GESTION STREAMLIT
+            try
+                do shell script "pkill -9 -f streamlit"
+            end try
+            
+            delay 0.2
+            
+            -- Idem ici, on s'assure que le Terminal est devant
+            tell application "Terminal"
+                activate -- <--- ON LE RÉACTIVE ICI
+                try
+                    close (every window whose name contains "main.py" or name contains "streamlit")
+                end try
+            end tell
+            
+        end ignoring
+        """
+
+        # Exécution
+        subprocess.Popen(["osascript", "-e", applescript])
+        
+        time.sleep(0.5)
+        st.stop()
 
 # --- MAIN CHAT ---
 if not st.session_state["user_session"]: st.stop()
