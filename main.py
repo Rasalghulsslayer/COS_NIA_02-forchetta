@@ -156,7 +156,7 @@ with st.sidebar:
                         st.error(msg)
     
     st.divider()
-    if st.button("🛑 Arrêter le système"):
+    if st.button("🛑 Stop system"):
         st.warning("Arrêt forcé et fermeture des fenêtres...")
         
         # Script AppleScript avec mise au premier plan (activate)
