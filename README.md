@@ -14,9 +14,6 @@ Avant de commencer, assurez-vous d'avoir installé **Python 3.8** et **Ollama**.
    ```bash
    pip install -r requirements.txt
    ```
-
-````
-
 3. **Installer le modèle IA :**
 
 ```bash
