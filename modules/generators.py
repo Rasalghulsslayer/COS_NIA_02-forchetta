@@ -37,10 +37,6 @@ def clean_mermaid_code(text):
         
     return final_code
 
-import os
-import re  # Import indispensable pour le nettoyage
-from gtts import gTTS
-import streamlit as st
 
 def generate_audio(text, lang='fr'):
     """Génère un fichier audio en nettoyant les caractères Markdown."""

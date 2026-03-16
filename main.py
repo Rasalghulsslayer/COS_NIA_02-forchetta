@@ -315,7 +315,7 @@ if prompt := st.chat_input("Your question or command..."):
                         
                         # Nettoyage des éléments générés inutiles
                         clean_txt = raw.split("</think>")[-1].strip() if "</think>" in raw else raw
-                        final_content = raw
+                        final_content = clean_txt
                         if "<tool_call>" in raw:
                             final_content = raw.split("<tool_call>")[-1].strip() 
                         final_content_clean = final_content.replace("```json", "").replace("```mermaid", "").replace("```", "").strip()
@@ -331,7 +331,7 @@ if prompt := st.chat_input("Your question or command..."):
                             audio_file = generators.generate_audio(final_content)
                             if audio_file: st.audio(audio_file)
                         
-                        elif selected_mode == "🧠 visual card":
+                        elif selected_mode == "🧠 Visual card":
                             st.markdown("### 🧠 Carte Mentale")
                             mermaid_code = generators.clean_mermaid_code(final_content)
                             try:
