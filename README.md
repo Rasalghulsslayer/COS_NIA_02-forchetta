@@ -1,4 +1,3 @@
-````markdown
 # 🚀 COS_NIA_02 - Assistant IA R2D2
 
 ## 📋 Prérequis
@@ -15,6 +14,7 @@ Avant de commencer, assurez-vous d'avoir installé **Python 3.8** et **Ollama**.
    ```bash
    pip install -r requirements.txt
    ```
+
 ````
 
 3. **Installer le modèle IA :**
@@ -77,3 +77,4 @@ L'interface sera accessible dans votre navigateur à l'adresse : [http://localho
 ```
 
 ```
+````
