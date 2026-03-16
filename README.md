@@ -70,8 +70,3 @@ L'interface sera accessible dans votre navigateur à l'adresse : [http://localho
 
 - **Mode Headless :** L'option `--server.headless true` évite l'ouverture automatique du navigateur (utile pour les serveurs distants ou Docker).
 - **Accès réseau :** L'adresse `0.0.0.0` permet au serveur d'écouter sur toutes les interfaces réseau de la machine.
-
-```
-
-```
-````
