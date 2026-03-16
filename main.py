@@ -258,7 +258,7 @@ if prompt := st.chat_input("Your question or command..."):
     with st.chat_message("assistant"):
         
         # Interception des mots-clés du planning 
-        mots_cles_planning = ["planif", "agenda", "emploi du temps"]
+        mots_cles_planning = ["planifie", "agenda", "emploi du temps", "week", "plan", "semaine", "calendrier", "schedule", "planning", "organise", "organiser", "révision", "réviser"]
         if any(kw in prompt.lower() for kw in mots_cles_planning):
             st.caption("🗓️ Generating schedule...")
             
