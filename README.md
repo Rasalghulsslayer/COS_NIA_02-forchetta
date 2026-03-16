@@ -1,68 +1,79 @@
-# COS_NIA_02
-R2D2
-Prérequis
-Avant de commencer, assurez-vous d'avoir installé :
-Python 3.8
-Ollama :
-    linux:
-    curl -fsSL https://ollama.com/install.sh | sh
+````markdown
+# 🚀 COS_NIA_02 - Assistant IA R2D2
 
-    windows:
-    irm https://ollama.com/install.ps1 | iex
+## 📋 Prérequis
 
-    mac :
-    curl -fsSL https://ollama.com/install.sh | sh
+Avant de commencer, assurez-vous d'avoir installé **Python 3.8** et **Ollama**.
 
-1. Cloner le projet et se préparer
-Ouvrez un terminal et placez-vous dans le répertoire du projet :
+- **Mac / Linux :** `curl -fsSL https://ollama.com/install.sh | sh`
+- **Windows :** `irm https://ollama.com/install.ps1 | iex`
 
-2. Installer les dépendances Python
-pip install -r requirements.txt
+## 🛠️ Installation
 
-3. installer le modèle
+1. **Cloner le projet :** Ouvrez un terminal et placez-vous dans le répertoire du projet.
+2. **Installer les dépendances Python :**
+   ```bash
+   pip install -r requirements.txt
+   ```
+````
+
+3. **Installer le modèle IA :**
+
+```bash
 ollama pull deepseek-r1:8b
-d'autres modèles peuvent être utilisés en adaptant le code. Ce modèle nécessite environ 6Gb de RAM et tourne "assez" bien sur ordinateur. Le code n'est pas forcément optimisé pour marcher avec ce modèle particulier
 
-Lancement de l'appli
-Pour faire fonctionner l'assistant, vous devez ouvrir deux terminaux :
+```
 
-Terminal 1 : Serveur d'IA
-Lancez le moteur Ollama pour qu'il puisse répondre aux requêtes :
+> _Note : Ce modèle nécessite environ 6 Go de RAM. D'autres modèles peuvent être utilisés en adaptant le code._
+
+## 🚀 Lancement de l'application
+
+L'assistant nécessite deux terminaux fonctionnant en parallèle :
+
+**Terminal 1 (Serveur d'IA) :**
+
+```bash
 ollama serve
 
-Terminal 2 : Interface Utilisateur
-Lancez l'interface Streamlit avec la configuration réseau appropriée :
+```
 
+**Terminal 2 (Interface Utilisateur) :**
+
+```bash
 streamlit run main.py --server.headless true --server.address 0.0.0.0
 
-Une fois lancé, l'assistant sera accessible dans votre navigateur à l'adresse : http://localhost:8501 (ou l'IP de votre machine).
+```
 
+L'interface sera accessible dans votre navigateur à l'adresse : [http://localhost:8501](https://www.google.com/search?q=http://localhost:8501) (ou via l'IP de votre machine).
 
-📁 Structure du projet
-main.py : Interface graphique streamlit, et logique du main chat
-requirements.txt : Liste des dépendances Python
-README.md : Ce guide d'utilisation.
-app.bat : tentative d'executable pour lancer directement l'appli sous windows
-start.sh : même chose sous linux
-utils.py : quelques trucs utiles comme les path des différents directory
+## 📁 Structure du projet
 
-Modules :
-    auth.py : gestion des comptes utilisateurs et de l'authentification
-    files.py : gestion de la base de données et recherche intelligente
-    generators.py : génération de contenu autre que le texte
-    rag.py : Le rag en lui même
-    schedule.py : module de gestion emploi du temps
+**Fichiers principaux :**
 
-data :
-    cours :
-        liste base de donnée des cours sur lesquels se base le rag
-    users :
-        liste des comptes et infos des utilisateurs
+- `main.py` : Interface graphique Streamlit et logique du chat.
+- `requirements.txt` : Liste des dépendances Python.
+- `utils.py` : Fonctions utilitaires (chemins de répertoires, etc.).
+- `app.bat` / `start.sh` : Scripts de lancement direct (Windows / Linux).
 
-generated :
-    directory d'arrivée des contenus générés
+**Modules :**
 
-💡 Notes importantes
-Headless mode : L'option --server.headless true est activée pour éviter l'ouverture automatique du navigateur (utile pour les serveurs distants ou Docker).
+- `auth.py` : Gestion des comptes et de l'authentification.
+- `files.py` : Gestion de la base de données et recherche intelligente.
+- `generators.py` : Génération de contenu alternatif (hors texte).
+- `rag.py` : Moteur RAG (Retrieval-Augmented Generation).
+- `schedule.py` : Module de gestion de l'emploi du temps.
 
-Accès réseau : L'adresse 0.0.0.0 permet au serveur d'écouter sur toutes les interfaces réseau de la machine
+**Dossiers de données :**
+
+- `data/cours/` : Base de données des cours sur lesquels se base le RAG.
+- `data/users/` : Informations et paramètres des comptes utilisateurs.
+- `generated/` : Répertoire de destination des contenus générés.
+
+## 💡 Notes importantes
+
+- **Mode Headless :** L'option `--server.headless true` évite l'ouverture automatique du navigateur (utile pour les serveurs distants ou Docker).
+- **Accès réseau :** L'adresse `0.0.0.0` permet au serveur d'écouter sur toutes les interfaces réseau de la machine.
+
+```
+
+```
